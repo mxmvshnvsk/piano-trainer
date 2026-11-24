@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PianoListener } from '../src/audio';
+import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES } from '../src/audio-timing';
 
 describe('microphone attempts', () => {
   let listener: PianoListener;
@@ -24,7 +25,7 @@ describe('microphone attempts', () => {
     terminate = vi.fn();
     respond = true;
     ready = true;
-    postMessage = vi.fn((data: { type: string; id: number; start: number; samples: Float32Array }) => {
+    postMessage = vi.fn((data: { type: string; id: number; start: number; samples: Float32Array; final?: boolean }) => {
       queueMicrotask(() => {
         if (data.type === 'init' && this.ready) this.onmessage?.({ data: { type: 'ready', backend: 'cpu' } });
         else if (data.type !== 'init' && this.respond) this.onmessage?.({ data: { type: 'frames', id: data.id, start: data.start, frames: new Float32Array(0), onsets: new Float32Array(0) } });
@@ -70,7 +71,8 @@ describe('microphone attempts', () => {
     }
     const analysis = workers[0].postMessage.mock.calls.map(([data]) => data).find(data => data.type === 'analyze');
     expect(analysis).toBeDefined();
-    expect(analysis!.samples).toHaveLength(44100);
+    expect(analysis!.samples.length).toBeGreaterThanOrEqual(MIN_ANALYSIS_SAMPLES);
+    expect(analysis!.samples.length).toBeLessThan(11025);
     expect(Math.max(...analysis!.samples)).toBeCloseTo(.08, 3);
     expect(activity).toHaveBeenCalledWith('heard');
     expect(activity).toHaveBeenCalledWith('processing');
@@ -79,6 +81,43 @@ describe('microphone attempts', () => {
   function play(amplitude = .005, blocks = 48) {
     for (let block = 0; block < blocks; block++) nodes.at(-1)!.port.onmessage?.({ data: Float32Array.from({ length: 2048 }, (_, i) => amplitude * Math.sin(2 * Math.PI * 440 * (block * 2048 + i) / 48000)) });
   }
+  it('starts the first check within half a second and never queues stale windows', async () => {
+    await listener.start(vi.fn(), vi.fn(), vi.fn());
+    workers[0].respond = false;
+    play(.005, 8);
+    expect(workers[0].postMessage.mock.calls.filter(([data]) => data.type === 'analyze')).toHaveLength(0);
+    play(.005, 1);
+    expect(workers[0].postMessage.mock.calls.filter(([data]) => data.type === 'analyze')).toHaveLength(1);
+    play(.005, 200);
+    const jobs = workers[0].postMessage.mock.calls.filter(([data]) => data.type === 'analyze');
+    expect(jobs).toHaveLength(1);
+    const old = jobs[0][0];
+    workers[0].onmessage?.({data:{type:'frames',id:old.id,start:old.start,frames:new Float32Array(0),onsets:new Float32Array(0)}});
+    await Promise.resolve();
+    play(.005, 1);
+    const latest = workers[0].postMessage.mock.calls.filter(([data]) => data.type === 'analyze').at(-1)![0];
+    expect(latest.start).toBeGreaterThan(7);
+    expect(latest.samples).toHaveLength(MAX_ANALYSIS_SAMPLES);
+  });
+  it('drains the deadline tail and waits for the final job before returning feedback', async () => {
+    await listener.start(vi.fn(),vi.fn(),vi.fn());
+    workers[0].respond=false; play(.005,9);
+    const first=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
+    const finishing=listener.finish();
+    expect(tracks[0].stop).not.toHaveBeenCalled();
+    play(.005,12); await Promise.resolve();
+    expect(tracks[0].stop).toHaveBeenCalledOnce();
+    workers[0].respond=true;
+    workers[0].onmessage?.({data:{type:'frames',id:first.id,start:first.start,frames:new Float32Array(0),onsets:new Float32Array(0)}});
+    await finishing;
+    const jobs=workers[0].postMessage.mock.calls.filter(([data])=>data.type==='analyze');
+    expect(jobs).toHaveLength(2);expect(jobs[1][0].final).toBe(true);
+  });
+  it('does not finalize a canceled attempt into the next attempt', async () => {
+    await listener.start(vi.fn(),vi.fn(),vi.fn());
+    const finishing=listener.finish();listener.stop();await finishing;
+    expect(workers[0].postMessage.mock.calls.some(([data])=>data.type==='analyze')).toBe(false);
+  });
   it('meters audio while recognition is still preparing', async () => {
     autoReady = false;
     const level = vi.fn(), metrics = vi.fn();

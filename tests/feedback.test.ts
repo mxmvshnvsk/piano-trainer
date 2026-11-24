@@ -35,6 +35,15 @@ describe('live feedback',()=>{
   });
 });
 describe('feedback without a keyboard',()=>{
+  it('does not claim that notes were missed when all pitches were heard briefly',()=>{
+    const evaluator=new Evaluator([{...step,requireTogether:true}]);
+    evaluator.push({at:14.99,notes:step.notes,onsets:step.notes,confidence:.9});
+    expect(evaluator.index).toBe(0);
+    expect(evaluator.feedback()).toEqual({type:'unconfirmed',missing:[],extra:[]});
+    expect(feedbackText(evaluator.feedback(),step.notes,0,'ru').title).toBe('Ноты верные · повтори');
+    expect(feedbackText(evaluator.feedback(),step.notes,0,'en').title).toBe('Right notes · try again');
+    expect(feedbackText(new Evaluator([step]).feedback(),step.notes,0,'ru').title).toBe('Не удалось распознать ноты');
+  });
   it('names the third chord note and its direction, not a finger',()=>{
     const message=feedbackText({type:'notes',missing:[76],extra:[75]},step.notes,0,'ru');
     expect(message.title).toBe('Сыграй третью ноту выше');

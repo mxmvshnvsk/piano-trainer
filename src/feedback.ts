@@ -5,6 +5,10 @@ import type { Language } from './i18n';
 export function feedbackText(feedback: Feedback, expected: number[], position: number, language: Language, names:Record<number,string>={}): { title: string; detail: string } {
   const ru = language === 'ru';
   const label=(n:number)=>names[n]||noteName(n);
+  if (feedback.type === 'unconfirmed') return {
+    title: ru ? 'Ноты верные · повтори' : 'Right notes · try again',
+    detail: ru ? 'Не удалось подтвердить начало и устойчивое звучание' : 'Could not confirm the attack and stable sound',
+  };
   if (feedback.type === 'uncertain') return { title: ru ? 'Не удалось распознать ноты' : 'Could not identify the notes', detail: ru ? 'Попробуй ещё раз' : 'Try again' };
   if (feedback.type === 'octave') return { title: ru ? 'Ноты верные, но не та октава' : 'Right notes, wrong octave', detail: ru ? 'Проверь октаву в задании' : 'Check the octave in the task' };
   if (feedback.type === 'timing') return { title: ru ? 'Сыграй все ноты одновременно' : 'Play all notes together', detail: ru ? 'Ноты верные, но прозвучали не одновременно' : 'Right notes, but the attacks were not simultaneous' };

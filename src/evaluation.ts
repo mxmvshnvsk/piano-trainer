@@ -1,5 +1,5 @@
 import { compareNotes, type Feedback, type Step } from './music';
-export type Frame = { at: number; notes: number[]; confidence: number; onsets?: number[] };
+export type Frame = { at: number; notes: number[]; confidence: number; onsets?: number[]; eligible?: boolean };
 export type LiveFeedback = { feedback: Feedback; step: number; expected: number[] };
 // Evidence must be simultaneous and repeated. We never union all notes in a recording.
 export class Evaluator {
@@ -26,7 +26,7 @@ export class Evaluator {
       attackTimes.every(time => time !== undefined) && Math.max(...attackTimes as number[]) - Math.min(...attackTimes as number[]) <= .18;
     const pitchesMatch = heard.length === expected.length && expected.every(n => heard.includes(n));
     if (pitchesMatch && frame.confidence >= .5 && !together && attackTimes.every(time => time !== undefined)) this.timingMismatch = true;
-    const match = together && pitchesMatch;
+    const match = frame.eligible !== false && together && pitchesMatch;
     // A wrong attack must persist. Incomplete attacks get a longer grace period
     // so the first finger of a correct chord does not flash as an error.
     if (match || frame.confidence < .65 || !heard.length) {
@@ -63,7 +63,7 @@ export class Evaluator {
   feedback(): Feedback {
     const step = this.steps[Math.min(this.index, this.steps.length - 1)];
     const result = compareNotes(step.notes, this.best.heard);
-    if (step.requireTogether && result.type === 'notes' && !result.missing.length && !result.extra.length) return { ...result, type: this.timingMismatch ? 'timing' : 'uncertain' };
+    if (result.type === 'notes' && !result.missing.length && !result.extra.length) return { ...result, type: this.timingMismatch ? 'timing' : 'unconfirmed' };
     return result;
   }
 }

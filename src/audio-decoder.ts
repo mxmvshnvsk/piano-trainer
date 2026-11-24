@@ -1,5 +1,22 @@
 import type { Frame } from './evaluation';
 
+// The short tail after a deadline supplies context and sustain for notes that
+// already sounded. A newly played note after the deadline cannot complete a task.
+export function limitPianoTail(frames: Frame[], cutoff: number, eligible: Set<number>): Frame[] {
+  return frames.map(frame => {
+    if (frame.at <= cutoff) {
+      if (frame.at >= cutoff - .12) {
+        frame.onsets?.forEach(note => eligible.add(note));
+        if (frame.confidence >= .5) frame.notes.forEach(note => eligible.add(note));
+      }
+      return frame;
+    }
+    // Preserve what was heard for honest keyboard/feedback rendering, while
+    // preventing new post-deadline notes from advancing the exercise.
+    return { ...frame, eligible: frame.notes.every(note => eligible.has(note)), onsets: [] };
+  });
+}
+
 export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, start: number): Frame[] {
   const count = frames.length / 88, output: Frame[] = [];
   const peaks = new Float32Array(88), sustained = new Uint8Array(88);

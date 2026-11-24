@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePianoFrames } from '../src/audio-decoder';
+import { decodePianoFrames, limitPianoTail } from '../src/audio-decoder';
 import { Evaluator } from '../src/evaluation';
 
 function prediction(notes: { midi: number; at: number; until?: number; strength?: number; onset?: number }[], count = 100) {
@@ -37,5 +37,14 @@ describe('soft piano attacks', () => {
     const incorrect = new Evaluator([step]);
     for (const frame of decodePianoFrames(rolled.frames, rolled.onsets, 0)) incorrect.push(frame);
     expect(incorrect.index).toBe(0); expect(incorrect.feedback().type).toBe('timing');
+  });
+});
+
+describe('deadline evidence',()=>{
+  it('preserves heard pitches while denying credit for newly played notes after the cutoff',()=>{
+    const frames=[{at:.98,notes:[60],onsets:[60],confidence:.9},{at:1.02,notes:[60],onsets:[],confidence:.9},{at:1.2,notes:[64],onsets:[64],confidence:.9}];
+    const result=limitPianoTail(frames,1,new Set());
+    expect(result[1].eligible).toBe(true);
+    expect(result[2]).toMatchObject({notes:[64],onsets:[],eligible:false});
   });
 });

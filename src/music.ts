@@ -110,7 +110,7 @@ export function exerciseSteps(exercise: Exercise): Step[] {
     return { notes: all, left, right, spelling, label:settings.kind==='scale'?pitchClasses[root%12]:label };
   });
 }
-export type Feedback = { type: 'uncertain' | 'octave' | 'notes' | 'timing'; missing: number[]; extra: number[] };
+export type Feedback = { type: 'uncertain' | 'unconfirmed' | 'octave' | 'notes' | 'timing'; missing: number[]; extra: number[] };
 export function compareNotes(expected: number[], heard: number[]): Feedback {
   const extra = heard.filter(n => !expected.includes(n));
   const missing = expected.filter(n => !heard.includes(n));

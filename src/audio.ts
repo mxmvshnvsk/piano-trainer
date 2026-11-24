@@ -1,6 +1,7 @@
 import type { Frame } from './evaluation';
+import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES, ANALYSIS_HOP_SAMPLES, PIANO_SAMPLE_RATE } from './audio-timing';
 import { microphoneAudible, microphoneGain, preparePianoWindow, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
-import { decodePianoFrames } from './audio-decoder';
+import { decodePianoFrames, limitPianoTail } from './audio-decoder';
 export class MicrophoneError extends Error {
   constructor(readonly reason: 'permission' | 'unavailable' | 'model' | 'device' | 'slow') { super(reason); }
 }
@@ -35,6 +36,9 @@ export class PianoListener {
   private activity: AudioActivity = 'listening';
   private backend?: string;
   private inferenceMs?: number;
+  private endingAt?: number;
+  private endingNotes = new Set<number>();
+  private drain?: { target: number; resolve: () => void; timer: ReturnType<typeof setTimeout> };
   setSensitivity(value: number) {
     if (value === this.sensitivity) return;
     this.sensitivity = value;
@@ -100,12 +104,13 @@ export class PianoListener {
       this.samples = new Float32Array(0); this.total = 0; this.lastSubmitted = 0; this.lastSound = -Infinity;
       this.running = true; this.jobError = undefined;
       this.activity = 'listening'; this.inferenceMs = undefined;
+      this.endingAt = undefined; this.endingNotes.clear();
       let modelReady = false;
       this.source = context.createMediaStreamSource(stream);
       this.node = new AudioWorkletNode(context, 'piano-capture');
       this.mute = context.createGain(); this.mute.gain.value = 0;
       this.source.connect(this.node); this.node.connect(this.mute); this.mute.connect(context.destination);
-      const resampler = new StreamingResampler(context.sampleRate, 22050);
+      const resampler = new StreamingResampler(context.sampleRate, PIANO_SAMPLE_RATE);
       this.node.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
         if (!this.running || generation !== this.generation) return;
         const raw = resampler.push(data);
@@ -121,9 +126,10 @@ export class PianoListener {
         }
         const next = new Float32Array(this.samples.length + samples.length);
         next.set(this.samples); next.set(samples, this.samples.length);
-        this.samples = next.length > 44100 ? next.slice(-44100) : next;
+        this.samples = next.length > MAX_ANALYSIS_SAMPLES ? next.slice(-MAX_ANALYSIS_SAMPLES) : next;
         this.total += samples.length;
-        if (modelReady && !this.busy && this.samples.length >= 44100 && this.total - this.lastSubmitted >= 17640 && this.total - this.lastSound <= 44100) void this.submit();
+        if (this.drain && this.total >= this.drain.target) this.resolveDrain();
+        if (modelReady && !this.busy && this.samples.length >= MIN_ANALYSIS_SAMPLES && this.total - this.lastSubmitted >= ANALYSIS_HOP_SAMPLES && this.total - this.lastSound <= MAX_ANALYSIS_SAMPLES) void this.submit();
       };
       stream.getTracks().forEach(track => track.onended = () => { if (this.running) { this.stop(); this.onError(new MicrophoneError('device')); } });
       // Opening the microphone may interrupt an already resumed Safari context.
@@ -142,10 +148,10 @@ export class PianoListener {
       throw new MicrophoneError(error instanceof DOMException && ['NotAllowedError', 'SecurityError'].includes(error.name) ? 'permission' : 'device');
     }
   }
-  private async submit() {
-    if (!this.worker || !this.recognitionEnabled || !this.samples.length || this.total - this.lastSound > 44100) return;
+  private async submit(final = false) {
+    if (!this.worker || !this.recognitionEnabled || !this.samples.length || this.total - this.lastSound > MAX_ANALYSIS_SAMPLES) return;
     const input = preparePianoWindow(this.samples);
-    const start = (this.total - input.length) / 22050;
+    const start = (this.total - input.length) / PIANO_SAMPLE_RATE;
     this.lastSubmitted = this.total;
     const job = new Promise<void>(resolve => { this.resolveJob = resolve; });
     this.busy = job;
@@ -157,23 +163,44 @@ export class PianoListener {
       this.jobError = new MicrophoneError('slow');
       this.dispose(); this.onError(this.jobError);
     }, 30000);
-    this.worker.postMessage({ type: 'analyze', id: this.generation, samples: input, start }, [input.buffer]);
+    this.worker.postMessage({ type: 'analyze', id: this.generation, samples: input, start, final }, [input.buffer]);
     await job;
     clearTimeout(timeout); this.inferenceMs = performance.now() - started;
     if (this.busy === job) this.busy = undefined;
   }
   private decode(frames: Float32Array, onsets: Float32Array, start: number) {
-    const output = decodePianoFrames(frames, onsets, start);
+    const decoded = decodePianoFrames(frames, onsets, start);
+    const output = this.endingAt === undefined ? decoded : limitPianoTail(decoded, this.endingAt, this.endingNotes);
     this.onFrames(output);
     return output.some(frame => frame.notes.length > 0);
   }
   async finish() {
+    const generation = this.generation;
+    if (this.running) {
+      // Include the worklet message already in flight at the deadline, then
+      // capture a bounded tail for context. The cutoff still excludes new notes.
+      this.endingAt = this.total / PIANO_SAMPLE_RATE + Math.min(.05, 2048 / (this.context?.sampleRate || 48000));
+      this.endingNotes.clear();
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(() => this.resolveDrain(), 600);
+        this.drain = { target: this.total + Math.ceil(.5 * PIANO_SAMPLE_RATE), resolve, timer };
+      });
+    }
+    if (generation !== this.generation) return;
     this.releaseCapture();
     await this.busy;
-    if (this.total > this.lastSubmitted) await this.submit();
+    if (generation !== this.generation) return;
+    // A live result deliberately withholds the newest context frames.
+    // Flush those too, even when no samples arrived since the last live job.
+    await this.submit(true);
     if (this.jobError) throw this.jobError;
   }
+  private resolveDrain() {
+    const drain = this.drain; this.drain = undefined;
+    if (drain) { clearTimeout(drain.timer); drain.resolve(); }
+  }
   private releaseCapture() {
+    this.resolveDrain();
     this.running = false;
     this.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); this.stream = undefined;
     this.node?.port.close(); this.source?.disconnect(); this.node?.disconnect(); this.mute?.disconnect();

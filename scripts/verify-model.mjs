@@ -4,6 +4,10 @@ import * as tf from '@tensorflow/tfjs';
 import { BasicPitch } from '@spotify/basic-pitch';
 import { preparePianoWindow } from '../src/audio-signal.ts';
 import { decodePianoFrames } from '../src/audio-decoder.ts';
+import { evaluatePianoWindow } from '../src/piano-model.ts';
+import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
+import { resolve } from 'node:path';
+import { MIN_ANALYSIS_SAMPLES, ANALYSIS_HOP_SAMPLES } from '../src/audio-timing.ts';
 
 const json = JSON.parse(await readFile(new URL('../public/model/model.json', import.meta.url), 'utf8'));
 const weights = await readFile(new URL('../public/model/group1-shard1of1.bin', import.meta.url));
@@ -67,4 +71,41 @@ console.log('PASS: soft G-flat note and major chord identified with stable evide
 console.log('PASS: quiet chord recognized after bounded gain; silence and low-level noise rejected.');
 console.log('PASS: bundled model loads, rejects silence, transcribes synthetic C major, and releases tensors.');
 console.log(recognized);
+// Match the live window against Spotify's reference CPU preprocessing.
+const shortInput = preparePianoWindow(samples.slice(0, MIN_ANALYSIS_SAMPLES));
+const reference = await run(shortInput);
+const oldStarted = performance.now(); await run(samples); const oldMs = performance.now() - oldStarted;
 model.dispose();
+setWasmPaths(resolve('public/wasm') + '/');
+assert.equal(await tf.setBackend('wasm'), true, 'WASM backend must initialize'); await tf.ready();
+const fastModel = await tf.loadGraphModel(tf.io.fromMemory({ modelTopology: json.modelTopology, weightSpecs: json.weightsManifest.flatMap(group => group.weights), weightData: weights.buffer.slice(weights.byteOffset, weights.byteOffset + weights.byteLength) }));
+await evaluatePianoWindow(fastModel, new Float32Array(MIN_ANALYSIS_SAMPLES));
+const liveBaseline = tf.memory().numTensors;
+const liveStarted = performance.now();
+const fast = await evaluatePianoWindow(fastModel, shortInput, true);
+const liveMs = performance.now() - liveStarted;
+for (const [actual, expected] of [[fast.frames, reference.frames.flat()], [fast.onsets, reference.onsets.flat()]]) {
+  const difference = Math.max(...expected.map((value, i) => Math.abs(value - actual[i])));
+  assert.ok(difference < .003, `live WASM outputs must match reference CPU values: max diff ${difference}`);
+}
+for (const pitches of [[60, 64, 67], [66], [66, 70, 73]]) {
+  const input = synthesize(pitches, .0035, 8);
+  let acceptedAt;
+  for (let length = MIN_ANALYSIS_SAMPLES; length <= MIN_ANALYSIS_SAMPLES + 2 * ANALYSIS_HOP_SAMPLES; length += ANALYSIS_HOP_SAMPLES) {
+    const prediction = await evaluatePianoWindow(fastModel, preparePianoWindow(input.slice(0, length)));
+    const decoded = decodePianoFrames(prediction.frames, prediction.onsets, 0);
+    let run = 0, longest = 0;
+    for (const frame of decoded) {
+      run = frame.notes.length === pitches.length && pitches.every(n => frame.notes.includes(n)) && frame.confidence >= .5 ? run + 1 : 0;
+      longest = Math.max(longest, run);
+    }
+    if (longest >= 12 && pitches.every(n => decoded.some(frame => frame.onsets.includes(n)))) { acceptedAt = length / 22050; break; }
+  }
+  assert.ok(acceptedAt !== undefined, `short live window must recognize quiet pitches ${pitches}`);
+  console.log('Live first confident window:', pitches, `${Math.round(acceptedAt * 1000)} ms of recording (attack at 150 ms)`);
+}
+const noSound = await evaluatePianoWindow(fastModel, new Float32Array(MIN_ANALYSIS_SAMPLES));
+assert.ok(decodePianoFrames(noSound.frames, noSound.onsets, 0).every(frame => !frame.notes.length), 'live silence must not become notes');
+assert.equal(tf.memory().numTensors, liveBaseline, 'live inference must not leak tensors');
+console.log(`PASS: live WASM matches CPU reference; bounded one-window inference; no tensor leaks. Host benchmark: old CPU wrapper ${oldMs.toFixed(0)} ms; live WASM ${liveMs.toFixed(0)} ms.`);
+fastModel.dispose();

@@ -54,6 +54,8 @@ export function App() {
   const [cueRevision, setCueRevision] = useState(0);
   const cueSignature = useRef('');
   const demoProcessing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const demoJob = useRef<Promise<void> | undefined>(undefined);
+  const resolveDemo = useRef<(() => void) | undefined>(undefined);
   const [error, setError] = useState('');
   const [offlineReady, setOfflineReady] = useState(false);
   const [offlineError, setOfflineError] = useState(false);
@@ -105,9 +107,9 @@ export function App() {
     }
     return () => { disposed = true; stopUpdates?.(); window.removeEventListener('online', offline); window.removeEventListener('offline', offline); window.removeEventListener('beforeinstallprompt', offerInstall); };
   }, []);
-  useEffect(() => () => { clearInterval(timer.current); clearTimeout(demoProcessing.current); listener.current?.dispose(); }, []);
+  useEffect(() => () => { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); resolveDemo.current?.(); listener.current?.dispose(); }, []);
 
-  function cancel() { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); listener.current?.stop(); setLevel(0); setActivity('listening'); }
+  function cancel() { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); resolveDemo.current?.(); resolveDemo.current = undefined; demoJob.current = undefined; listener.current?.stop(); setLevel(0); setActivity('listening'); }
   function reset(next: Exercise, keepCapture = false) {
     if (keepCapture) flowGate.current.arm(lastFrame.current, evaluator.current.steps.at(-1)!.notes);
     else { cancel(); flowGate.current.clear(); lastFrame.current = -Infinity; }
@@ -160,6 +162,7 @@ export function App() {
     const token = attemptToken.current;
     try {
       if (input === 'microphone') await listener.current?.finish();
+      else await demoJob.current;
       if (token !== attemptToken.current || phaseRef.current === 'success') return;
       const result = evaluator.current.feedback();
       const target = evaluator.current.steps[Math.min(evaluator.current.index, evaluator.current.steps.length - 1)].notes;
@@ -232,10 +235,16 @@ export function App() {
     if (demoSelected.current.length >= step.notes.length) {
       const notes=[...demoSelected.current], token=attemptToken.current;
       demoSelected.current=[]; setActivity('processing');
+      let resolve!: () => void;
+      const job = new Promise<void>(done => { resolve = done; });
+      demoJob.current = job; resolveDemo.current = resolve;
       demoProcessing.current=setTimeout(()=>{
-        if(token!==attemptToken.current || phaseRef.current!=='listening')return;
-        setActivity('listening'); const at=demoTime.current+=.7;
-        acceptRef.current([0,.12,.26,.4].map(offset=>({at:at+offset,notes,onsets:offset===0?notes:[],confidence:1})));
+        if(token===attemptToken.current && ['listening','analyzing'].includes(phaseRef.current)) {
+          setActivity('listening'); const at=demoTime.current+=.7;
+          acceptRef.current([0,.12,.26,.4].map(offset=>({at:at+offset,notes,onsets:offset===0?notes:[],confidence:1})));
+        }
+        resolve();
+        if(demoJob.current===job) { demoJob.current=undefined; resolveDemo.current=undefined; }
       },300);
     }
   }
@@ -255,7 +264,7 @@ export function App() {
     : phase === 'analyzing' ? t('Проверяю последние ноты…', 'Checking the last notes…')
     : phase === 'paused' ? t('Тренировка на паузе', 'Practice paused') : phase === 'success' ? t('Всё верно', 'All correct')
     : phase === 'feedback' ? message?.title || '' : microphoneErrorText(error, language);
-  const cueType = phase === 'success' ? 'success' : message || phase === 'error' ? 'incorrect' : phase === 'analyzing' || phase === 'loading' || phase === 'listening' && activity === 'processing' ? 'processing' : phase === 'listening' && activity === 'heard' ? 'heard' : 'neutral';
+  const cueType = phase === 'success' ? 'success' : phase === 'feedback' && feedback?.type === 'unconfirmed' ? 'heard' : message || phase === 'error' ? 'incorrect' : phase === 'analyzing' || phase === 'loading' || phase === 'listening' && activity === 'processing' ? 'processing' : phase === 'listening' && activity === 'heard' ? 'heard' : 'neutral';
   const primaryLabel = ['listening','loading','analyzing'].includes(phase) || phase === 'success' && (flow || settings.auto) ? t('Пауза', 'Pause')
     : phase === 'paused' ? t('Продолжить', 'Resume') : phase === 'ready' ? t('Начать', 'Start') : t('Повторить', 'Try again');
   const patch = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings(s => ({ ...s, [key]: value }));
