@@ -1,0 +1,12 @@
+.select-control{position:relative;width:100%;min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);display:flex;align-items:center;min-height:44px}
+.select-control:focus-within{outline:2px solid var(--accent);outline-offset:3px}.select-control.expanded{border-color:var(--accent)}
+.select-control>input{display:block;width:100%;min-width:0;color:var(--ink);background:none;border:0;padding:10px 34px 10px 12px;font:inherit;font-size:15px;outline:none;border-radius:inherit;text-overflow:ellipsis}
+.select-control>input::placeholder{color:var(--soft);opacity:1}.select-control.disabled{opacity:.55}.select-control.disabled input{cursor:default}
+.select-control>button{position:absolute;right:0;top:0;bottom:0;width:34px;min-height:0;padding:0;border-radius:0 12px 12px 0;color:var(--soft);background:transparent}
+.select-control>button svg{width:16px;height:16px;transition:transform .15s}.select-control.expanded>button svg{transform:rotate(180deg)}
+.select-popup{z-index:1000;isolation:isolate;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--accent) transparent;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 36px #0003;padding:5px;min-height:0;color:var(--ink);font-family:'Manrope',system-ui,sans-serif}
+.select-option{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 11px;min-height:40px;border-radius:8px;font-size:14px;line-height:1.4;cursor:pointer;overflow-wrap:anywhere}
+.select-option[data-active=true]{background:var(--wash)}.select-option[aria-selected=true]{color:var(--accent)}.select-option.disabled{opacity:.4;cursor:default}
+.select-option svg{width:16px;height:16px;flex-shrink:0}.select-empty{padding:15px 11px;font-size:13px;color:var(--soft)}
+.rhythm-settings .select-control{min-height:36px;border-radius:10px}.rhythm-settings .select-control input{font-size:13px;padding:7px 32px 7px 10px}
+@media(max-width:600px){.select-control>input,.rhythm-settings .select-control input{font-size:16px}.select-control{min-height:44px}.select-option{min-height:44px;font-size:15px}.rhythm-settings .select-control{min-height:40px}}

@@ -1,0 +1,53 @@
+.rhythm-toggle[aria-pressed=true]{background:var(--wash);color:var(--ink)}
+.rhythm-trainer{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:16px 28px 12px}
+.rhythm-title{display:flex;align-items:center;gap:16px;flex-shrink:0}.rhythm-title h1{font:400 36px/1 'Cormorant Garamond',Georgia,serif;color:var(--ink)}
+.rhythm-title>span{font-size:12px;color:var(--soft)}.rhythm-title>button{margin-left:auto;font-size:12px;min-height:36px;padding:6px 10px}
+.rhythm-settings{border:0;padding:0;margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 16px;flex-shrink:0}
+.rhythm-settings>label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--soft);min-width:0}
+.rhythm-settings select,.rhythm-settings input[type=number]{min-height:36px;height:36px;font:400 13px 'Manrope',sans-serif;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);width:100%;min-width:0}
+.rhythm-settings:disabled{opacity:.65}.rhythm-settings:disabled input,.rhythm-settings:disabled select{cursor:default}
+.rhythm-switches{grid-column:1 / -1;display:flex;gap:10px 20px;flex-wrap:wrap}.rhythm-switches label{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--soft);min-height:26px}.rhythm-switches svg{width:14px;height:14px}.rhythm-switches input{margin:0}
+.metronome{display:flex;align-items:center;justify-content:center;gap:12px;min-height:50px;flex-shrink:0;margin:3px 0}
+.metronome>span{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;color:var(--soft);transition:background .07s,color .07s,transform .07s}
+.metronome b{font-size:12px;font-weight:400}.metronome .strong{border-color:var(--accent)}.metronome .secondary{border-style:dashed;border-color:var(--accent)}
+.metronome .current{background:var(--accent);color:var(--button-ink);transform:scale(1.12);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 12%,transparent)}
+.metronome small{font-size:11px;color:var(--soft);min-width:70px;margin-left:6px}
+.rhythm-score{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;flex-shrink:0;padding-top:12px}
+.rhythm-bar{display:flex;position:relative;border:1px solid var(--line);border-radius:12px;min-height:86px;padding:8px 5px;isolation:isolate}
+.rhythm-bar.active{border-color:var(--accent)}.bar-number{position:absolute;top:-18px;left:5px;font-size:10px;color:var(--soft)}
+.rhythm-note{position:relative;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;border-radius:7px;color:var(--soft)}
+.rhythm-note .note-glyph{width:26px;height:35px;stroke:currentColor;stroke-width:1.6;flex-shrink:0;z-index:1}.rhythm-note small{font-size:10px;z-index:1;line-height:1.2}
+.note-fill{position:absolute;inset:auto 0 0;height:3px;background:var(--accent);width:var(--fill);z-index:0}
+.rhythm-note.now{background:var(--wash);color:var(--ink)}.rhythm-note.rest{opacity:.65}
+.rhythm-note.on-time{color:var(--positive);background:var(--positive-wash)}.rhythm-note.early,.rhythm-note.late{color:var(--wrong);background:var(--wrong-wash)}.rhythm-note.missed{opacity:.5}
+.hit-position{position:absolute;bottom:0;height:7px;width:3px;border-radius:2px;background:currentColor;transform:translateX(-50%)}
+.rhythm-cursor{position:absolute;top:0;bottom:0;width:1px;background:var(--accent);pointer-events:none;z-index:2;transition:none}
+.rhythm-feedback{min-height:28px;display:flex;justify-content:center;align-items:center;gap:8px;font-size:13px;text-align:center;flex-shrink:0;color:var(--soft)}
+.rhythm-feedback.on-time{color:var(--positive)}.rhythm-feedback.early,.rhythm-feedback.late,.rhythm-feedback.extra{color:var(--wrong)}.rhythm-feedback svg{width:17px;height:17px}
+.rhythm-level{height:3px;width:46px;background:var(--wash);border-radius:2px;overflow:hidden}.rhythm-level i{height:100%;display:block;background:var(--accent)}
+.rhythm-keyboard{display:flex;max-width:500px;width:100%;align-self:center;height:100px;padding:2px;gap:2px;border-radius:8px;background:var(--line);flex-shrink:0}
+.rhythm-keyboard>button{flex:1;position:relative;min-width:0;padding:0;min-height:0;height:100%;border:0;opacity:1;border-radius:0 0 5px 5px;background:var(--key);color:#655a71;overflow:visible;touch-action:manipulation;user-select:none}
+.rhythm-keyboard button>span{position:absolute;bottom:9px;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap}
+.rhythm-keyboard .black-key-shape{position:absolute;top:0;right:-31%;width:62%;height:60%;border-radius:0 0 4px 4px;background:var(--black);z-index:1;pointer-events:none}
+.rhythm-keyboard .target{background:var(--target-key);box-shadow:inset 0 0 0 2px var(--accent);color:var(--target-ink)}
+.rhythm-keyboard .target.cue{background:var(--accent);box-shadow:inset 0 0 0 2px var(--shine),0 0 22px color-mix(in srgb,var(--accent) 18%,transparent)}
+.rhythm-keyboard .target.hit-on-time{background:var(--positive-wash);box-shadow:inset 0 0 0 2px var(--positive);color:var(--positive)}
+.rhythm-keyboard .target.hit-early,.rhythm-keyboard .target.hit-late,.rhythm-keyboard .target.hit-extra{background:var(--wrong-wash);box-shadow:inset 0 0 0 2px var(--wrong);color:var(--wrong)}
+.rhythm-help{font-size:10px;color:var(--soft);line-height:1.6;text-align:center;max-width:720px;align-self:center;flex-shrink:0}
+.rhythm-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 1.4fr 1fr;gap:12px;padding:10px 0;border-top:1px solid var(--line);flex-shrink:0}
+.rhythm-stats>span{display:flex;flex-direction:column;gap:4px;text-align:center;font-size:10px;color:var(--soft)}.rhythm-stats b{font-weight:400;font-size:18px;color:var(--ink);white-space:nowrap}
+.rhythm-history{font-size:10px;color:var(--soft);text-align:center;flex-shrink:0;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}.rhythm-history button{font-size:10px;padding:3px 6px;min-height:26px;text-decoration:underline;text-underline-offset:3px}
+.rhythm-controls{display:flex;justify-content:center;padding:6px 0;position:sticky;bottom:-12px;background:var(--paper);margin-top:auto;flex-shrink:0;z-index:3}
+@media(max-height:720px) and (min-width:601px){.rhythm-trainer{gap:7px;padding-top:10px}.rhythm-title h1{font-size:30px}.rhythm-score{padding-top:10px}.rhythm-bar{min-height:70px;padding:4px}.rhythm-keyboard{height:74px}.metronome{min-height:40px;margin:0}.rhythm-stats{padding:7px 0}.rhythm-stats b{font-size:16px}.rhythm-controls button{min-height:40px}}
+@media(max-width:600px){
+ header .nav-button,header .icon-button{width:34px;min-width:34px}header .brand{font-size:21px}
+ .rhythm-trainer{padding:12px 16px;gap:12px;overflow:auto}.rhythm-title{gap:10px}.rhythm-title h1{font-size:32px}.rhythm-title>span{font-size:10px}.rhythm-title>button{font-size:0;width:34px;padding:0}
+ .rhythm-trainer.has-attempt .rhythm-settings{display:none}
+ .rhythm-settings{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rhythm-settings input[type=number],.rhythm-settings select{font-size:16px;height:40px}
+ .rhythm-switches{gap:8px 14px}.rhythm-switches label{font-size:10px}.metronome{gap:8px;min-height:46px}.metronome>span{width:27px;height:27px}.metronome small{min-width:60px;font-size:10px;margin:0}
+ .rhythm-score{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 10px;padding-top:14px}.rhythm-bar{min-height:76px;padding:5px}
+ .rhythm-stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 8px}.rhythm-stats>span:nth-child(4){grid-column:1 / 3}.rhythm-stats b{font-size:17px}.rhythm-stats>span{font-size:9px}
+ .rhythm-help{font-size:10px}.rhythm-feedback{font-size:12px;min-height:36px}.rhythm-keyboard{height:90px}.rhythm-controls{bottom:-12px}
+}
+@media(max-width:355px){header .brand{font-size:18px}header .nav-button,header .icon-button{width:32px;min-width:32px}}
+@media(min-width:601px) and (max-width:750px){header .nav-label{display:none}header .nav-button{padding:8px 10px}header .brand{font-size:23px}}

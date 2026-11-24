@@ -1,0 +1,17 @@
+@font-face{font-family:Bravura;src:url('./assets/Bravura.woff2') format('woff2');font-display:block;font-weight:400;font-style:normal}
+.chord-symbol{display:inline-flex;align-items:baseline;line-height:1;letter-spacing:0;white-space:nowrap;font-weight:400}
+.symbol-accidental{width:.3em;height:.6em;position:relative;top:-.12em;margin-left:.015em;margin-right:.01em;flex-shrink:0;color:var(--accent)}
+.symbol-minor{font-size:.48em;margin-left:.04em;line-height:1}
+.symbol-quality{font-size:.4em;margin-left:.055em;line-height:1}.symbol-quality.raised{position:relative;top:-.65em}
+.chord{background-image:none;background-color:transparent}
+.chord .symbol-part{color:transparent;background:var(--gleam);background-size:280% 100%;background-clip:text;-webkit-background-clip:text;animation:shimmer 8s cubic-bezier(.4,0,.3,1) infinite}
+.still .chord .symbol-part{animation-play-state:paused}
+.task-face.result-success .chord,.task-face.result-incorrect .chord{background-color:transparent}
+.task-face.result-success .chord .symbol-part{background-image:none;background-color:var(--positive)}
+.task-face.result-incorrect .chord .symbol-part{background-image:none;background-color:var(--wrong)}
+.task-face.result-success .symbol-accidental{color:var(--positive)}.task-face.result-incorrect .symbol-accidental{color:var(--wrong)}
+.engraving-glyph{font-family:Bravura;font-size:40px;font-weight:400;fill:currentColor;stroke:none}
+.rest-reference-line{stroke:currentColor;stroke-width:1;opacity:.6}
+.rhythm-title .tempo-mark{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.tempo-mark .note-glyph{width:18px;height:25px;stroke:none;flex-shrink:0}
+@media(prefers-reduced-motion:reduce){.chord .symbol-part{animation:none;background-image:none;background-color:var(--accent)}}
