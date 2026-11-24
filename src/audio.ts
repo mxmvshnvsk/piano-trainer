@@ -1,4 +1,5 @@
 import type { Frame } from './evaluation';
+import { preparePianoWindow, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
 export class MicrophoneError extends Error {
   constructor(readonly reason: 'permission' | 'unavailable' | 'model' | 'device') { super(reason); }
 }
@@ -51,10 +52,12 @@ export class PianoListener {
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) throw new MicrophoneError('unavailable');
     // Start the audio context and ask permission from the user's click, before
     // awaiting model loading (important for mobile browser gesture policies).
-    const context = new AudioContext({ sampleRate: 22050 });
+    // Reuse the unlocked context across attempts. Recreating it from an
+    // automatic Next transition can lose Safari's user-gesture permission.
+    const context = this.context && this.context.state !== 'closed' ? this.context : new AudioContext({ latencyHint: 'interactive' });
     this.context = context;
     try {
-      await context.resume();
+      await resumeAudio(context);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       if (generation !== this.generation) { stream.getTracks().forEach(t => t.stop()); return false; }
       this.stream = stream;
@@ -66,13 +69,13 @@ export class PianoListener {
       this.node = new AudioWorkletNode(context, 'piano-capture');
       this.mute = context.createGain(); this.mute.gain.value = 0;
       this.source.connect(this.node); this.node.connect(this.mute); this.mute.connect(context.destination);
+      const resampler = new StreamingResampler(context.sampleRate, 22050);
       this.node.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
         if (!this.running || generation !== this.generation) return;
-        const samples = context.sampleRate === 22050 ? data : resample(data, context.sampleRate, 22050);
-        let sum = 0; for (const n of samples) sum += n * n;
-        const rms = Math.sqrt(sum / samples.length);
-        this.onLevel(Math.min(1, rms * 12));
-        if (rms >= .007) {
+        const samples = resampler.push(data);
+        const { rms, peak } = signalLevel(samples);
+        this.onLevel(Math.min(1, Math.sqrt(rms * 12)));
+        if (rms >= .001 && peak >= .004) {
           if (!this.busy) this.onActivity('heard');
           this.lastSound = this.total;
         }
@@ -83,6 +86,9 @@ export class PianoListener {
         if (!this.busy && this.total >= 44100 && this.total - this.lastSubmitted >= 17640 && this.total - this.lastSound <= 44100) void this.submit();
       };
       stream.getTracks().forEach(track => track.onended = () => { if (this.running) { this.stop(); this.onError(new MicrophoneError('device')); } });
+      // Opening the microphone may interrupt an already resumed Safari context.
+      await resumeAudio(context);
+      if (generation !== this.generation) return false;
       return true;
     } catch (error) {
       if (generation !== this.generation) return false;
@@ -93,7 +99,7 @@ export class PianoListener {
   }
   private async submit() {
     if (!this.worker || !this.samples.length) return;
-    const input = this.samples.slice();
+    const input = preparePianoWindow(this.samples);
     const start = (this.total - input.length) / 22050;
     this.lastSubmitted = this.total;
     const job = new Promise<void>(resolve => { this.resolveJob = resolve; });
@@ -129,18 +135,9 @@ export class PianoListener {
   private releaseCapture() {
     this.running = false;
     this.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); this.stream = undefined;
-    this.source?.disconnect(); this.node?.disconnect(); this.mute?.disconnect();
+    this.node?.port.close(); this.source?.disconnect(); this.node?.disconnect(); this.mute?.disconnect();
     this.source = undefined; this.node = undefined; this.mute = undefined;
-    void this.context?.close().catch(() => {}); this.context = undefined;
   }
   stop() { this.generation++; this.releaseCapture(); }
-  dispose() { this.stop(); this.worker?.terminate(); this.worker = undefined; this.initialized = undefined; this.resolveJob?.(); this.busy = undefined; }
-}
-export function resample(input: Float32Array, from: number, to: number) {
-  const result = new Float32Array(Math.floor(input.length * to / from));
-  for (let i = 0; i < result.length; i++) {
-    const position = i * from / to, left = Math.floor(position), mix = position - left;
-    result[i] = input[left] * (1 - mix) + (input[Math.min(left + 1, input.length - 1)] || 0) * mix;
-  }
-  return result;
+  dispose() { this.stop(); void this.context?.close().catch(() => {}); this.context = undefined; this.worker?.terminate(); this.worker = undefined; this.initialized = undefined; this.resolveJob?.(); this.busy = undefined; }
 }
