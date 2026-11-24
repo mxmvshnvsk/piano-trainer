@@ -112,3 +112,11 @@ Mockup drafts and generated design experiments live in the ignored `output/` dir
 ## Licenses
 
 Application: MIT. Spotify Basic Pitch and its model: Apache-2.0 (`public/model/LICENSE`). TensorFlow.js: Apache-2.0. Manrope, Cormorant Garamond and Steinberg's Bravura music font: SIL Open Font License (copies in `public/licenses/`). The open-palm silhouette is an original vector drawing; no stock reference image is included.
+
+## Link preview artwork
+
+`public/social-preview.png` is the 1280×640 social card; `public/social-preview.svg` is its outlined vector source. Open Graph and large-image card metadata in `index.html` use the public GitHub Pages image URL.
+
+For links to the repository itself, upload the PNG separately in **GitHub → Repository Settings → General → Social preview → Edit → Upload an image**. GitHub documents this independent repository setting in [Customizing your repository's social media preview](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/customizing-your-repositorys-social-media-preview).
+
+To regenerate both assets on macOS after `npm ci`, run `swift -module-cache-path /tmp/piano-swift-cache scripts/generate-social-preview.swift` from the repository root. It uses CoreText to outline the app's bundled Cormorant Garamond and Manrope fonts, plus the existing palm vector. No network or installed font registration is needed.
