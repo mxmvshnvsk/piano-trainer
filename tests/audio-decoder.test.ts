@@ -11,6 +11,14 @@ function prediction(notes: { midi: number; at: number; until?: number; strength?
   return { frames, onsets };
 }
 describe('soft piano attacks', () => {
+  it('prefers a recovered onset time over a late model peak for an already heard note',()=>{
+    const notes=[66,69,73],evaluator=new Evaluator([{label:'F♯m',notes,left:[],right:notes,requireTogether:true}]);
+    for(const at of [.05,.15,.25,.35,.39])evaluator.push({at,notes,confidence:.9,onsets:at===.05?[69,73]:[]});
+    const onsetTimes={66:.05,69:.05,73:.05};
+    evaluator.push({at:.4,notes,confidence:.9,onsets:[66],onsetTimes});
+    evaluator.push({at:.52,notes,confidence:.9,onsets:[],onsetTimes});
+    expect(evaluator.index).toBe(1);
+  });
   it('recovers a soft chord attack confirmed only in the next overlapping window', () => {
     const notes=[66,69,73];
     const input=prediction(notes.map(midi=>({midi,at:5,onset:midi===66?.12:.8})),40);

@@ -21,10 +21,6 @@ export class Evaluator {
     this.lastTime = frame.at;
     const expected = this.steps[this.index].notes;
     const heard = [...new Set(frame.notes)];
-    // Noise and the release can produce a second onset peak for a held note.
-    // Preserve its first attack until there has been a meaningful pitch gap.
-    for (const note of frame.onsets || []) if (expected.includes(note) &&
-      (!this.attacks.has(note) || frame.at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, frame.at);
     // A later overlapping window may confirm a soft pitch whose leading edge
     // was previously below confidence. Recover its audio time without replaying
     // old frames or moving the first attack of a continuously held note.
@@ -33,6 +29,10 @@ export class Evaluator {
       if (expected.includes(note) && at !== undefined && Number.isFinite(at) && at > this.after && at <= frame.at &&
         (!this.attacks.has(note) || at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, at);
     }
+    // Prefer recovered audio times to a late onset-head peak for a held note.
+    // Noise/release peaks cannot move its first attack without a pitch gap.
+    for (const note of frame.onsets || []) if (expected.includes(note) &&
+      (!this.attacks.has(note) || frame.at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, frame.at);
     for (const note of heard) this.lastHeard.set(note, frame.at);
     const attackTimes = expected.map(n => this.attacks.get(n));
     const together = !this.steps[this.index].requireTogether || frame.onsets === undefined ||
