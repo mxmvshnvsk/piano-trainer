@@ -35,6 +35,17 @@ describe('live feedback',()=>{
   });
 });
 describe('held-note onset noise',()=>{
+  it('does not carry a previous timing error into a new correct but brief attack',()=>{
+    const evaluator=new Evaluator([{...step,requireTogether:true}]);
+    evaluator.push({at:0,notes:[69],onsets:[69],confidence:.9});
+    evaluator.push({at:.3,notes:[69,72],onsets:[72],confidence:.9});
+    evaluator.push({at:.6,notes:step.notes,onsets:[76],confidence:.9});
+    expect(evaluator.feedback().type).toBe('timing');
+    evaluator.push({at:.9,notes:[],onsets:[],confidence:0});
+    evaluator.push({at:1.2,notes:step.notes,onsets:step.notes,confidence:.9});
+    expect(evaluator.index).toBe(0);
+    expect(evaluator.feedback().type).toBe('unconfirmed');
+  });
   it('does not move a held note attack to a later noise peak',()=>{
     const e=new Evaluator([{...step,requireTogether:true}]);
     e.push({at:0,notes:[69],onsets:[69],confidence:.9});
@@ -46,6 +57,12 @@ describe('held-note onset noise',()=>{
   });
 });
 describe('feedback without a keyboard',()=>{
+  it('does not turn a weak background pitch into a definite wrong-note verdict',()=>{
+    const evaluator=new Evaluator([step]);
+    for(const at of [0,.1,.2,.3])evaluator.push({at,notes:[30],onsets:[30],confidence:.45});
+    expect(evaluator.feedback().type).toBe('uncertain');
+    expect(evaluator.liveFeedback()).toBeNull();
+  });
   it('does not claim that notes were missed when all pitches were heard briefly',()=>{
     const evaluator=new Evaluator([{...step,requireTogether:true}]);
     evaluator.push({at:14.99,notes:step.notes,onsets:step.notes,confidence:.9});

@@ -94,7 +94,7 @@ export class PianoListener {
           if (data.id === this.generation) {
             if (this.jobRevision === this.signalRevision && this.recognitionEnabled) {
               const recognized = this.decode(data.frames, data.onsets, data.start);
-              if (data.id === this.generation) this.reportActivity(recognized ? 'listening' : data.noiseOnly ? 'background' : 'uncertain');
+              if (data.id === this.generation) this.reportActivity(recognized ? 'processing' : 'listening');
             } else this.reportActivity('listening');
           }
           this.resolveJob?.();
@@ -146,7 +146,6 @@ export class PianoListener {
         this.onLevel(Math.min(1, Math.sqrt(rms * 12)));
         onMetrics({ rms, peak, inputRms, inputPeak, sampleRate: context.sampleRate, backend: this.backend, inferenceMs: this.inferenceMs });
         if (microphoneAudible(rms, this.sensitivity, this.noiseFloor, this.noiseProfile.length > 0)) {
-          if (!this.busy && this.activity === 'listening') this.reportActivity('heard');
           this.lastSound = this.total;
         }
         const next = new Float32Array(this.samples.length + samples.length);
@@ -183,7 +182,8 @@ export class PianoListener {
     const job = new Promise<void>(resolve => { this.resolveJob = resolve; });
     this.busy = job;
     this.jobRevision = this.signalRevision;
-    this.reportActivity('processing');
+    // Starting a model job is invisible: volume alone is not note evidence.
+    // The result handler shows recognition only for supported piano pitches.
     const started = performance.now(), worker = this.worker;
     const timeout = setTimeout(() => {
       if (this.busy !== job || this.worker !== worker) return;
@@ -199,7 +199,18 @@ export class PianoListener {
     const decoded = decodePianoFrames(frames, onsets, start);
     const output = this.endingAt === undefined ? decoded : limitPianoTail(decoded, this.endingAt, this.endingNotes);
     this.onFrames(output);
-    return output.some(frame => frame.notes.length > 0);
+    let since: number | undefined;
+    let recognized = false;
+    const newest = output.at(-1)?.at ?? -Infinity;
+    for (const frame of output) {
+      if (frame.notes.length && frame.confidence >= .5) {
+        since ??= frame.at;
+        if (frame.at - since >= .035) {
+          if (newest - frame.at <= .15) recognized = true;
+        }
+      } else since = undefined;
+    }
+    return recognized;
   }
   async finish() {
     const generation = this.generation;

@@ -30,7 +30,7 @@ export class Evaluator {
     const together = !this.steps[this.index].requireTogether || frame.onsets === undefined ||
       attackTimes.every(time => time !== undefined) && Math.max(...attackTimes as number[]) - Math.min(...attackTimes as number[]) <= .18;
     const pitchesMatch = heard.length === expected.length && expected.every(n => heard.includes(n));
-    if (pitchesMatch && frame.confidence >= .5 && !together && attackTimes.every(time => time !== undefined)) this.timingMismatch = true;
+    if (pitchesMatch && frame.confidence >= .5) this.timingMismatch = !together && attackTimes.every(time => time !== undefined);
     const match = frame.eligible !== false && together && pitchesMatch;
     // A wrong attack must persist. Incomplete attacks get a longer grace period
     // so the first finger of a correct chord does not flash as an error.
@@ -45,7 +45,7 @@ export class Evaluator {
       const grace = problem.extra.length || problem.type === 'timing' ? .22 : .65;
       if (problem.type !== 'uncertain' && frame.at - this.wrongSince >= grace) this.latestError = { feedback: problem, step: this.index, expected: [...expected] };
     }
-    if (frame.confidence >= .4 && heard.length) {
+    if (frame.confidence >= .5 && heard.length) {
       const score = expected.filter(n => heard.includes(n)).length * 2 - heard.filter(n => !expected.includes(n)).length;
       if (score >= this.best.score) this.best = { score, heard };
     }

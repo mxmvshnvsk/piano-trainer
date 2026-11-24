@@ -165,7 +165,7 @@ export function App() {
     let candidate: LiveFeedback | null = null;
     for (const frame of frames) {
       if (flow && !flowGate.current.accept(frame)) continue;
-      latest = frame.notes;
+      latest = frame.confidence >= .5 ? frame.notes : [];
       const before = evaluator.current.index;
       const target = evaluator.current.steps[before]?.notes || [];
       const result = evaluator.current.push(frame);
@@ -290,7 +290,7 @@ export function App() {
   const ordinal = exercise.settings.kind === 'progression' ? steps.slice(0,feedbackStep).filter(s=>s.label===steps[feedbackStep]?.label).length : feedbackStep;
   const message = shownFeedback ? feedbackText(shownFeedback,feedbackTarget,ordinal,language,noteNames) : null;
   const status = phase === 'ready' ? '' : phase === 'loading' ? t('Готовлю микрофон и распознавание…', 'Preparing microphone and recognition…')
-    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу звук · проверяю ноты…','Sound received · checking notes…') : activity === 'background' ? t('Фон подавлен · жду ноты','Background reduced · waiting for notes') : activity === 'uncertain' ? t('Звук есть · ноты не определены','Sound received · no notes identified') : activity === 'heard' ? t('Слышу звук','Sound received') : t('Слушаю','Listening'))
+    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу ноты · проверяю…','Notes heard · checking…') : activity === 'background' ? t('Фон подавлен · жду ноты','Background reduced · waiting for notes') : activity === 'uncertain' ? t('Звук есть · ноты не определены','Sound received · no notes identified') : activity === 'heard' ? t('Слышу ноты','Notes heard') : t('Слушаю','Listening'))
     : phase === 'analyzing' ? t('Проверяю последние ноты…', 'Checking the last notes…')
     : phase === 'paused' ? t('Тренировка на паузе', 'Practice paused') : phase === 'success' ? t('Всё верно', 'All correct')
     : phase === 'feedback' ? message?.title || '' : microphoneErrorText(error, language);

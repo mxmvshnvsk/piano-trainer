@@ -75,8 +75,8 @@ describe('microphone attempts', () => {
     expect(analysis!.samples.length).toBeGreaterThanOrEqual(MIN_ANALYSIS_SAMPLES);
     expect(analysis!.samples.length).toBeLessThan(11025);
     expect(Math.max(...analysis!.samples)).toBeCloseTo(.005, 4);
-    expect(activity).toHaveBeenCalledWith('heard');
-    expect(activity).toHaveBeenCalledWith('processing');
+    expect(activity).not.toHaveBeenCalledWith('heard');
+    expect(activity).not.toHaveBeenCalledWith('processing');
     expect(level.mock.calls.at(-1)![0]).toBeGreaterThan(.15);
   });
   function play(amplitude = .005, blocks = 48) {
@@ -138,11 +138,11 @@ describe('microphone attempts', () => {
     expect(workers[0].postMessage.mock.calls.some(([data]) => data.type === 'analyze')).toBe(false);
     const quietLevel = level.mock.calls.at(-1)![0];
     listener.setSensitivity(100); play(.0005);
-    expect(activity).toHaveBeenCalledWith('heard');
+    expect(activity).not.toHaveBeenCalledWith('heard');
     expect(workers[0].postMessage.mock.calls.some(([data]) => data.type === 'analyze')).toBe(true);
     expect(level.mock.calls.at(-1)![0]).toBeGreaterThan(quietLevel * 3);
     await Promise.resolve();
-    expect(activity).toHaveBeenCalledWith('uncertain');
+    expect(activity).toHaveBeenCalledWith('listening');
   });
   it('does not submit background noise on timeout or finalization after calibration', async () => {
     await listener.start(vi.fn(), vi.fn(), vi.fn());
@@ -182,18 +182,43 @@ describe('microphone attempts', () => {
     listener.beginNoiseMeasurement();play(.004,9);listener.stop();
     expect(listener.finishNoiseMeasurement()).toEqual([]);
   });
-  it('distinguishes suppressed background from an unrecognized piano attempt',async()=>{
+  it('animates only after the model supplies sustained, confident note evidence',async()=>{
+    const activity=vi.fn();await listener.start(vi.fn(),vi.fn(),vi.fn(),activity);
+    workers[0].respond=false;play(.004,9);
+    const job=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
+    const frames=new Float32Array(32*88),onsets=new Float32Array(32*88);
+    for(let i=5;i<32;i++)for(const note of [61,64,68])frames[i*88+note-21]=.8;
+    for(const note of [61,64,68])onsets[5*88+note-21]=.8;
+    workers[0].onmessage?.({data:{type:'frames',id:job.id,start:job.start,frames,onsets}});
+    expect(activity.mock.calls.at(-1)).toEqual(['processing']);
+    await Promise.resolve();play(.004,5);
+    expect(activity).toHaveBeenCalledWith('processing');
+  });
+  it.each([{strength:.45,count:32},{strength:.9,count:1}])('does not animate a weak or momentary pitch $strength/$count',async({strength,count})=>{
+    const activity=vi.fn();await listener.start(vi.fn(),vi.fn(),vi.fn(),activity);
+    workers[0].respond=false;play(.004,9);
+    const job=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
+    const frames=new Float32Array(count*88),onsets=new Float32Array(count*88);
+    for(let i=0;i<count;i++)frames[i*88+30-21]=strength;
+    onsets[30-21]=.8;
+    workers[0].onmessage?.({data:{type:'frames',id:job.id,start:job.start,frames,onsets}});
+    expect(activity).not.toHaveBeenCalledWith('processing');
+    expect(activity.mock.calls.at(-1)).toEqual(['listening']);
+  });
+  it('keeps suppressed background visually idle',async()=>{
     const activity=vi.fn();await listener.start(vi.fn(),vi.fn(),vi.fn(),activity);
     workers[0].respond=false;play(.004,9);
     const job=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
     workers[0].onmessage?.({data:{type:'frames',id:job.id,start:job.start,frames:new Float32Array(88),onsets:new Float32Array(88),noiseOnly:true}});
-    expect(activity.mock.calls.at(-1)).toEqual(['background']);
+    expect(activity.mock.calls.at(-1)).toEqual(['listening']);
   });
-  it('reports uncertain recognition explicitly when the model returns no notes', async () => {
+  it('does not animate recognition just because the microphone receives sound', async () => {
     const activity = vi.fn();
     await listener.start(vi.fn(), vi.fn(), vi.fn(), activity);
     play(); await Promise.resolve();
-    expect(activity.mock.calls.at(-1)).toEqual(['uncertain']);
+    expect(activity.mock.calls.at(-1)).toEqual(['listening']);
+    expect(activity).not.toHaveBeenCalledWith('processing');
+    expect(activity).not.toHaveBeenCalledWith('heard');
   });
   it('releases a stuck model job after 30 seconds and can prepare a fresh worker', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

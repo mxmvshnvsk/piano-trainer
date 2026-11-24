@@ -36,10 +36,14 @@ export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, st
       const probability = frames[i * 88 + n], previous = i ? frames[(i - 1) * 88 + n] : 0;
       const soft = peaks[n] < .35 && sustained[n] === 1;
       if (probability >= (soft ? .5 : .32) && (peaks[n] >= .3 || soft)) { notes.push(n + 21); strength += probability; }
-      const modelAttack = onsets[i * 88 + n] >= .35 && (i === 0 || onsets[(i - 1) * 88 + n] < .35);
-      // An overlapping window beginning on an already held note is not a new attack.
-      const softAttack = soft && probability >= .5 && previous < .5 && (i > 0 || start === 0);
-      if (modelAttack || softAttack) attacks.push(n + 21);
+      const modelAttack = onsets[i * 88 + n] >= .35 && (i > 0 ? onsets[(i - 1) * 88 + n] < .35 : start === 0);
+      // Pitch and onset heads can peak at different times for the same attack.
+      // Use the supported pitch's leading edge too, rather than making a block
+      // chord look rolled simply because one onset head responds late.
+      const threshold = soft ? .5 : .32;
+      const pitchAttack = notes.includes(n + 21) && previous < threshold && (i > 0 || start === 0);
+      // Unsupported onset-head peaks (speech/noise, with no pitch) are not notes.
+      if (modelAttack && notes.includes(n + 21) || pitchAttack) attacks.push(n + 21);
     }
     output.push({ at: start + i * 256 / 22050, notes, onsets: attacks, confidence: notes.length ? strength / notes.length : 0 });
   }

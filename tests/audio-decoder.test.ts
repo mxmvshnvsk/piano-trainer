@@ -11,6 +11,20 @@ function prediction(notes: { midi: number; at: number; until?: number; strength?
   return { frames, onsets };
 }
 describe('soft piano attacks', () => {
+  it('does not call a block chord rolled when the onset head responds late', () => {
+    const notes = [61,64,68];
+    const input = prediction(notes.map(midi => ({ midi, at: 5, onset: 0 })));
+    // All three pitches begin together; their onset-head peaks arrive later.
+    for (const [n, at] of [5,25,40].entries()) input.onsets[at * 88 + notes[n] - 21] = .8;
+    const evaluator = new Evaluator([{label:'C♯m',notes,left:[],right:notes,requireTogether:true}]);
+    for (const frame of decodePianoFrames(input.frames,input.onsets,0)) evaluator.push(frame);
+    expect(evaluator.index).toBe(1);
+  });
+  it('ignores onset peaks that have no supporting piano pitch', () => {
+    const input = prediction([]);
+    input.onsets[5 * 88 + 40] = .9;
+    expect(decodePianoFrames(input.frames,input.onsets,0).every(frame=>!frame.onsets?.length)).toBe(true);
+  });
   it('identifies a sustained G-flat without requiring a staccato onset', () => {
     const input = prediction([{ midi: 66, at: 5 }]);
     const decoded = decodePianoFrames(input.frames, input.onsets, 0);
@@ -26,6 +40,8 @@ describe('soft piano attacks', () => {
     const decoded = decodePianoFrames(input.frames, input.onsets, 2);
     expect(decoded.some(frame => frame.notes.includes(66))).toBe(true);
     expect(decoded.every(frame => !frame.onsets?.length)).toBe(true);
+    input.onsets[66-21]=.9;
+    expect(decodePianoFrames(input.frames,input.onsets,2).every(frame=>!frame.onsets?.length)).toBe(true);
   });
   it('accepts simultaneous soft attacks but still rejects rolled-and-held chords', () => {
     const step = { label: 'G♭', notes: [66, 70, 73], left: [], right: [66, 70, 73], requireTogether: true };
