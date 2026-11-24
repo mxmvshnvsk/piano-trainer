@@ -3,23 +3,28 @@ import assert from 'node:assert/strict';
 import * as tf from '@tensorflow/tfjs';
 import { BasicPitch } from '@spotify/basic-pitch';
 import { preparePianoWindow } from '../src/audio-signal.ts';
+import { decodePianoFrames } from '../src/audio-decoder.ts';
 
 const json = JSON.parse(await readFile(new URL('../public/model/model.json', import.meta.url), 'utf8'));
 const weights = await readFile(new URL('../public/model/group1-shard1of1.bin', import.meta.url));
 await tf.setBackend('cpu');
 const model = await tf.loadGraphModel(tf.io.fromMemory({ modelTopology: json.modelTopology, weightSpecs: json.weightsManifest.flatMap(group => group.weights), weightData: weights.buffer.slice(weights.byteOffset, weights.byteOffset + weights.byteLength) }));
 const basic = new BasicPitch(Promise.resolve(model));
-const samples = new Float32Array(44100);
-for (let i = 0; i < samples.length; i++) {
-  const time = i / 22050;
-  if (time < .15 || time > 1.8) continue;
-  const age = time - .15;
-  const envelope = Math.min(1, age * 120) * Math.exp(-age * 1.4);
-  for (const midi of [60, 64, 67]) {
-    const f = 440 * 2 ** ((midi - 69) / 12);
-    for (let partial = 1; partial <= 6; partial++) samples[i] += .07 / (partial ** 1.4) * envelope * Math.sin(2 * Math.PI * f * partial * time);
+function synthesize(pitches, amplitude = .07, attack = 120) {
+  const samples = new Float32Array(44100);
+  for (let i = 0; i < samples.length; i++) {
+    const time = i / 22050;
+    if (time < .15 || time > 1.8) continue;
+    const age = time - .15;
+    const envelope = Math.min(1, age * attack) * Math.exp(-age * 1.4);
+    for (const midi of pitches) {
+      const f = 440 * 2 ** ((midi - 69) / 12);
+      for (let partial = 1; partial <= 6; partial++) samples[i] += amplitude / (partial ** 1.4) * envelope * Math.sin(2 * Math.PI * f * partial * time);
+    }
   }
+  return samples;
 }
+const samples = synthesize([60, 64, 67]);
 const run = async input => {
   const frames = [], onsets = [];
   tf.engine().startScope();
@@ -47,6 +52,18 @@ let seed = 12345;
 const noise = Float32Array.from({ length: 44100 }, () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return .0003 * (seed / 2 ** 31 - 1); });
 const noiseResult = await run(preparePianoWindow(noise));
 assert.ok(!Array.from({ length: 88 }, (_, n) => n).some(n => Math.max(...noiseResult.frames.map(f => f[n])) >= .32 && Math.max(...noiseResult.onsets.map(o => o[n])) >= .3), 'low-level background noise must not pass note confidence and attack thresholds');
+for (const pitches of [[66], [66, 70, 73]]) {
+  const soft = await run(preparePianoWindow(synthesize(pitches, .0035, 8)));
+  const decoded = decodePianoFrames(new Float32Array(soft.frames.flat()), new Float32Array(soft.onsets.flat()), 0);
+  let length = 0, longest = 0;
+  for (const frame of decoded) {
+    length = frame.notes.length === pitches.length && pitches.every(n => frame.notes.includes(n)) && frame.confidence >= .5 ? length + 1 : 0;
+    longest = Math.max(longest, length);
+  }
+  assert.ok(longest >= 10, `soft G-flat ${pitches.length === 1 ? 'note' : 'chord'} must have stable pitch evidence`);
+  for (const midi of pitches) assert.ok(decoded.some(frame => frame.onsets.includes(midi)), `soft onset ${midi} must be detected`);
+}
+console.log('PASS: soft G-flat note and major chord identified with stable evidence and onsets.');
 console.log('PASS: quiet chord recognized after bounded gain; silence and low-level noise rejected.');
 console.log('PASS: bundled model loads, rejects silence, transcribes synthetic C major, and releases tensors.');
 console.log(recognized);

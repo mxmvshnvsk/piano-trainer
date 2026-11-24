@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { preparePianoWindow, resumeAudio, signalLevel, StreamingResampler } from '../src/audio-signal';
+import { microphoneAudible, microphoneGain, microphoneThreshold, preparePianoWindow, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from '../src/audio-signal';
 
 describe('quiet microphone signal', () => {
   it('amplifies a quiet musical waveform and removes DC without clipping louder input', () => {
@@ -50,6 +50,43 @@ describe('browser audio activation', () => {
     const context = { state: 'suspended', resume: () => new Promise(() => {}) };
     const result = expect(resumeAudio(context as unknown as AudioContext)).rejects.toThrow('audio-resume-timeout');
     await vi.advanceTimersByTimeAsync(5000); await result;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('microphone sensitivity', () => {
+  it('provides a neutral default, attenuation, and boost with finite bounds', () => {
+    expect(microphoneGain(50)).toBe(1);
+    expect(microphoneGain(0)).toBeCloseTo(.2512, 4);
+    expect(microphoneGain(100)).toBeCloseTo(15.8489, 4);
+    expect(microphoneGain(NaN)).toBe(1);
+    expect(microphoneGain(1000)).toBe(microphoneGain(100));
+  });
+  it('keeps boosted input within the model amplitude range', () => {
+    const input = Float32Array.from({ length: 1000 }, (_, i) => 4 * Math.sin(i));
+    expect(signalLevel(preparePianoWindow(input)).peak).toBeLessThan(.951);
+  });
+});
+
+describe('measured background', () => {
+  it.each([0, 50, 100])('keeps measured room noise below the trigger at sensitivity %i', sensitivity => {
+    const floor = .003, gain = microphoneGain(sensitivity);
+    expect(microphoneAudible(floor * gain, sensitivity, floor)).toBe(false);
+    expect(microphoneThreshold(sensitivity, floor)).toBeGreaterThan(floor * gain);
+    expect(microphoneAudible(.015 * gain, sensitivity, floor)).toBe(true);
+  });
+});
+
+describe('microphone permission timeout', () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  it('bounds a stalled device request and releases a stream granted too late', async () => {
+    vi.useFakeTimers();
+    let grant!: (stream: MediaStream) => void;
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: () => new Promise<MediaStream>(resolve => { grant = resolve; }) } });
+    const failed = expect(requestMicrophone()).rejects.toThrow('microphone-timeout');
+    await vi.advanceTimersByTimeAsync(20000); await failed;
+    const stop = vi.fn(); grant({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+    await Promise.resolve(); expect(stop).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -12,6 +12,7 @@ import { watchUpdates } from './updates';
 import { FlowGate, flowSettings } from './flow';
 import { ChordSymbol } from './MusicNotation';
 import { RhythmTrainer } from './RhythmTrainer';
+import { MicrophoneSettings, microphoneErrorText } from './MicrophoneSettings';
 
 type Phase = 'ready' | 'loading' | 'listening' | 'analyzing' | 'paused' | 'success' | 'feedback' | 'error';
 type Preferences = { theme?: 'light' | 'dark'; language?: Language };
@@ -174,6 +175,7 @@ export function App() {
       changePhase('loading');
       try {
         listener.current ??= new PianoListener();
+        listener.current.setSensitivity(settings.microphoneSensitivity); listener.current.setNoiseFloor(settings.microphoneNoiseFloor);
         const previousTime = resume ? (settings.seconds - remainingRef.current) : 0;
         const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(frames.map(f => ({ ...f, at: f.at + previousTime }))); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(value); });
         if (!started || token !== attemptToken.current) return;
@@ -248,17 +250,11 @@ export function App() {
   const feedbackTarget = liveFeedback && phase !== 'feedback' ? liveFeedback.expected : steps[Math.min(feedbackStep,steps.length-1)].notes;
   const ordinal = exercise.settings.kind === 'progression' ? steps.slice(0,feedbackStep).filter(s=>s.label===steps[feedbackStep]?.label).length : feedbackStep;
   const message = shownFeedback ? feedbackText(shownFeedback,feedbackTarget,ordinal,language,noteNames) : null;
-  const audioErrors: Record<string, [string, string]> = {
-    permission: ['Разреши доступ к микрофону в браузере', 'Allow microphone access in your browser'],
-    unavailable: ['Микрофон недоступен. Открой приложение по HTTPS в браузере', 'Microphone unavailable. Open the app over HTTPS in a browser'],
-    device: ['Не удалось подключить микрофон. Проверь устройство', 'Could not connect the microphone. Check the device'],
-    model: ['Распознавание недоступно. Подключись к сети и повтори', 'Recognition is unavailable. Connect to the internet and retry'],
-  };
   const status = phase === 'ready' ? '' : phase === 'loading' ? t('Готовлю микрофон и распознавание…', 'Preparing microphone and recognition…')
-    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу звук · проверяю ноты…','Sound received · checking notes…') : activity === 'heard' ? t('Слышу звук','Sound received') : t('Слушаю','Listening'))
+    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу звук · проверяю ноты…','Sound received · checking notes…') : activity === 'uncertain' ? t('Звук есть · ноты не определены','Sound received · no notes identified') : activity === 'heard' ? t('Слышу звук','Sound received') : t('Слушаю','Listening'))
     : phase === 'analyzing' ? t('Проверяю последние ноты…', 'Checking the last notes…')
     : phase === 'paused' ? t('Тренировка на паузе', 'Practice paused') : phase === 'success' ? t('Всё верно', 'All correct')
-    : phase === 'feedback' ? message?.title || '' : t(...(audioErrors[error] || audioErrors.model));
+    : phase === 'feedback' ? message?.title || '' : microphoneErrorText(error, language);
   const cueType = phase === 'success' ? 'success' : message || phase === 'error' ? 'incorrect' : phase === 'analyzing' || phase === 'loading' || phase === 'listening' && activity === 'processing' ? 'processing' : phase === 'listening' && activity === 'heard' ? 'heard' : 'neutral';
   const primaryLabel = ['listening','loading','analyzing'].includes(phase) || phase === 'success' && (flow || settings.auto) ? t('Пауза', 'Pause')
     : phase === 'paused' ? t('Продолжить', 'Resume') : phase === 'ready' ? t('Начать', 'Start') : t('Повторить', 'Try again');
@@ -307,6 +303,7 @@ export function App() {
         <Field label={`${t('Пауза между заданиями','Between exercises')} · ${settings.gap} ${t('с','s')}`}><input disabled={flow} type="range" min="0" max="10" value={settings.gap} onChange={e => patch('gap', +e.target.value)} /></Field>
         <Field label={t('Ввод','Input')}><Select value={input} onChange={e => { cancel(); changePhase('ready'); setInput(e.target.value as typeof input); }}><option value="microphone">{t('Микрофон','Microphone')}</option><option value="demo">{t('Демо · экранные клавиши','Demo · on-screen keys')}</option></Select></Field>
       </div>
+      {input === 'microphone' && <MicrophoneSettings listener={listener.current ??= new PianoListener()} sensitivity={settings.microphoneSensitivity} noiseFloor={settings.microphoneNoiseFloor} onSensitivity={value => patch('microphoneSensitivity', value)} onNoiseFloor={value => patch('microphoneNoiseFloor', value)} language={language} />}
       <div className="switches"><label><input type="checkbox" disabled={flow} checked={flow || settings.keyboard} onChange={e=>patch('keyboard',e.target.checked)} />{t('Показывать клавиатуру','Show keyboard')}</label>{(['hints','heard','auto'] as const).map((key,i) => <label key={key}><input type="checkbox" disabled={flow || key !== 'auto' && !settings.keyboard} checked={flow || settings[key]} onChange={e => patch(key, e.target.checked)} />{t(['Подсвечивать ноты задания','Подсвечивать сыгранные ноты','Переходить автоматически'][i])}</label>)}</div>
       <p className="setting-note">{t('Настроения — условные ассоциации. Играй тембром grand piano без педали.', 'Moods are suggested associations. Use a grand piano sound without pedal.')}</p>
       <button className="primary apply" onClick={() => { reset(!flow && settings.difficultOnly && difficult.length ? difficult[0] : createExercise(activeSettings)); setPanel(null); }}>{t('К практике','Practice')}</button>
@@ -331,9 +328,9 @@ export function App() {
         {steps.length > 1 && <div className="step-dots" aria-label={`${Math.min(stepIndex+1,steps.length)} / ${steps.length}`}>{steps.map((step,i) => <span className={i < stepIndex ? 'done' : i === stepIndex ? 'current' : ''} key={i}>{exercise.settings.kind === 'progression' && !sequentialChord ? step.label : i+1}</span>)}</div>}
         <div className="result-slot" aria-live="polite" aria-atomic="true">{status && <div key={`${cueType}-${cueRevision}`} className={`result-card ${cueType}`}>
           <span className="result-symbol">{cueType==='success'?<CircleCheck />:cueType==='incorrect'?<CircleAlert />:cueType==='processing'?<LoaderCircle />:cueType==='heard'?<AudioLines />:phase==='paused'?<Pause />:<Mic />}</span>
-          <div><p>{status}</p>{message && <small>{message.detail}</small>}{phase === 'success' && settings.auto && !flow && <small>{t('Следующее упражнение через','Next exercise in')} {Math.ceil(countdown)} {t('с','s')}</small>}{phase==='listening' && !message && !flow && <small>{Math.ceil(remaining)} {t('с осталось','s remaining')}</small>}</div>
+          <div><p>{status}</p>{message && <small>{message.detail}</small>}{phase === 'success' && settings.auto && !flow && <small>{t('Следующее упражнение через','Next exercise in')} {Math.ceil(countdown)} {t('с','s')}</small>}{phase==='listening' && !message && activity==='uncertain' ? <small>{t('Подстрой микрофон в настройках и повтори','Adjust the microphone in settings and retry')}</small> : phase==='listening' && !message && !flow && <small>{Math.ceil(remaining)} {t('с осталось','s remaining')}</small>}</div>
         </div>}</div>
-        {phase === 'listening' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${Math.max(3,level*100)}%` }} /></div>}
+        {(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}
       </main>
       {(flow || settings.keyboard && (settings.hints || settings.heard)) && <Keyboard names={noteNames} expected={flow || settings.hints ? currentStep.notes : []} target={currentStep.notes} heard={flow || settings.heard ? heard : []} position={currentStep.notes.length===1 ? stepIndex : 0} range={visibleNotes} language={language} interactive={input === 'demo' && phase === 'listening' && activity!=='processing'} onNote={playDemo} />}
       <div className="transport"><button onClick={save} disabled={saved} className="save-button">{saved ? <Check /> : <BookmarkPlus />}<span>{saved ? t('В сложном','Added') : t('В сложное','To difficult')}</span></button><button className="primary" onClick={primary}>{['listening','loading','analyzing','paused'].includes(phase) || phase === 'success' && (flow || settings.auto) ? phase === 'paused' ? <Play /> : <Pause /> : <Play />}<span>{primaryLabel}</span></button><button className="next-button" onClick={() => next()}>{t('Дальше','Next')}<ChevronRight /></button></div>

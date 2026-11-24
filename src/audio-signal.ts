@@ -10,6 +10,20 @@ export function signalLevel(samples: Float32Array) {
   return { mean, rms: Math.sqrt(energy / (samples.length || 1)), peak };
 }
 
+export function microphoneGain(sensitivity: number) {
+  const value = Math.max(0, Math.min(100, Number.isFinite(sensitivity) ? sensitivity : 50));
+  return 10 ** ((value - 50) * (value < 50 ? .24 : .48) / 20);
+}
+
+export function microphoneThreshold(sensitivity: number, noiseFloor = 0) {
+  const margin = 3 - Math.max(0, Math.min(100, sensitivity)) * .015;
+  return Math.max(.001, noiseFloor * microphoneGain(sensitivity) * margin);
+}
+
+export function microphoneAudible(rms: number, sensitivity: number, noiseFloor = 0) {
+  return rms >= microphoneThreshold(sensitivity, noiseFloor);
+}
+
 // A quiet instrument should reach the model without relaxing note confidence.
 // Limit gain and gate very low-level noise before inference: the model can
 // otherwise turn even tiny background noise into confident note predictions.
@@ -17,8 +31,8 @@ export function preparePianoWindow(samples: Float32Array) {
   const { mean, rms, peak } = signalLevel(samples);
   // A two-second window includes silence and decay; its RMS can be lower
   // than the short worklet block that triggered recognition.
-  if (rms < .0005 || peak < .004) return new Float32Array(samples.length);
-  const gain = Math.min(16, Math.max(1, .2 / peak));
+  if (rms < .0005) return new Float32Array(samples.length);
+  const gain = peak > .95 ? .95 / peak : Math.min(16, Math.max(1, .2 / peak));
   return samples.map(sample => (sample - mean) * gain);
 }
 
@@ -60,4 +74,17 @@ export async function resumeAudio(context: AudioContext) {
     ]);
     if ((context.state as AudioContextState) !== 'running') throw new Error('audio-not-running');
   } finally { clearTimeout(timer); }
+}
+
+export function requestMicrophone(): Promise<MediaStream> {
+  return new Promise((resolve, reject) => {
+    let expired = false;
+    const timer = setTimeout(() => { expired = true; reject(new Error('microphone-timeout')); }, 20000);
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(stream => {
+      clearTimeout(timer);
+      // A permission prompt can complete after cancellation/timeout.
+      if (expired) stream.getTracks().forEach(track => track.stop());
+      else resolve(stream);
+    }, error => { clearTimeout(timer); reject(error); });
+  });
 }

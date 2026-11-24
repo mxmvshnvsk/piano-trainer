@@ -8,10 +8,10 @@ export type Settings = {
   chordPlaying: Playing | 'alternating';
   scaleMode: ScaleChoice; scaleTonic: 'any' | number;
   voicing: 'root' | 'first' | 'wide'; octave: number; mood: string;
-  level: 'basic' | 'triads' | 'extended' | 'all'; seconds: number; gap: number;
+  level: 'basic' | 'triads' | 'extended' | 'all'; seconds: number; gap: number; microphoneSensitivity: number; microphoneNoiseFloor: number;
   keyboard: boolean; hints: boolean; heard: boolean; auto: boolean; difficultOnly: boolean;
 };
-export const defaults: Settings = { hand: 'right', kind: 'chord', order: 'random', chordPlaying: 'together', scaleMode:'auto', scaleTonic:'any', voicing: 'root', octave: 4, mood: 'all', level: 'basic', seconds: 15, gap: 3, keyboard: true, hints: true, heard: true, auto: true, difficultOnly: false };
+export const defaults: Settings = { hand: 'right', kind: 'chord', order: 'random', chordPlaying: 'together', scaleMode:'auto', scaleTonic:'any', voicing: 'root', octave: 4, mood: 'all', level: 'basic', seconds: 15, gap: 3, microphoneSensitivity: 50, microphoneNoiseFloor: 0, keyboard: true, hints: true, heard: true, auto: true, difficultOnly: false };
 export const pitchClasses = rootSpellings;
 export const noteName = (midi: number) => `${pitchClasses[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
 export const octaveIndex = (midi: number) => Math.floor(midi / 12) - 1;
@@ -132,5 +132,7 @@ export function restoreSettings(value: unknown): Settings {
   if ([3, 4, 5].includes(v.octave as number)) next.octave = v.octave as number;
   if (typeof v.seconds === 'number' && Number.isFinite(v.seconds)) next.seconds = Math.max(5, Math.min(60, v.seconds));
   if (typeof v.gap === 'number' && Number.isFinite(v.gap)) next.gap = Math.max(0, Math.min(10, v.gap));
+  if (typeof v.microphoneSensitivity === 'number' && Number.isFinite(v.microphoneSensitivity)) next.microphoneSensitivity = Math.max(0, Math.min(100, v.microphoneSensitivity));
+  if (typeof v.microphoneNoiseFloor === 'number' && Number.isFinite(v.microphoneNoiseFloor)) next.microphoneNoiseFloor = Math.max(0, Math.min(.1, v.microphoneNoiseFloor));
   return next;
 }

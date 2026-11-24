@@ -65,6 +65,16 @@ describe('exercise generation', () => {
     expect(steps.map(s=>s.label)).toEqual(['C','C','C','F','F','F','G','G','G']);
     expect(steps.every(s=>s.notes.length===1)).toBe(true);
   });
+  it('restores microphone sensitivity without breaking older saved exercises', () => {
+    expect(restoreSettings({}).microphoneSensitivity).toBe(50);
+    expect(restoreSettings({}).microphoneNoiseFloor).toBe(0);
+    expect(restoreSettings({microphoneNoiseFloor:.003}).microphoneNoiseFloor).toBe(.003);
+    expect(restoreSettings({microphoneNoiseFloor:Infinity}).microphoneNoiseFloor).toBe(0);
+    expect(restoreSettings({microphoneSensitivity:78}).microphoneSensitivity).toBe(78);
+    expect(restoreSettings({microphoneSensitivity:1000}).microphoneSensitivity).toBe(100);
+    expect(restoreSettings({microphoneSensitivity:-10}).microphoneSensitivity).toBe(0);
+    expect(restoreSettings({microphoneSensitivity:NaN}).microphoneSensitivity).toBe(50);
+  });
   it('validates corrupt persisted settings', () => {
     expect(restoreSettings({ hand:'feet', kind:'free', seconds:NaN, octave:7, mood:'unknown' })).toEqual(defaults);
     expect(restoreSettings({ seconds:10000, gap:-5 }).seconds).toBe(60);
