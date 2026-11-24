@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Mic, Square, LoaderCircle } from 'lucide-react';
 import { MicrophoneError, type AudioActivity, type MicrophoneMetrics, type PianoListener } from './audio';
 import { microphoneAudible, microphoneGain, microphoneThreshold } from './audio-signal';
-import { noteName } from './music';
+import { diagnosticNoteName } from './notation';
 import type { Frame } from './evaluation';
 import type { Language } from './i18n';
 import './microphone.css';
@@ -103,7 +103,7 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
     <div className={`microphone-meter ${loud ? 'overload' : ''}`} role="meter" aria-label={t('Уровень микрофона после настройки', 'Microphone level after adjustment')} aria-valuemin={-72} aria-valuemax={0} aria-valuenow={Math.round(db)} aria-valuetext={active && metrics ? `${Math.round(db)} dB` : t('Выключен', 'Off')}><span style={{ width: active && metrics ? `${(db + 72) / 72 * 100}%` : '0%' }} /><i aria-hidden="true" style={{ left: `${Math.min(100, (thresholdDb + 72) / 72 * 100)}%` }} /></div>
     <div className="microphone-signal"><span>{active && phase === 'loading' && !metrics ? t('Подключаю микрофон…', 'Connecting microphone…') : signal}</span><span>{active && metrics ? `${Math.round(db)} dB` : '—'}</span></div>
     <div className="microphone-recognition" role="status">{active && (phase === 'loading' || activity === 'processing') && <LoaderCircle className="microphone-spinner" />}<span>{recognition}</span></div>
-    <div className="microphone-notes"><span>{t('Распознано:', 'Identified:')}</span><strong>{notes.length ? notes.map(noteName).join(' · ') : '—'}</strong>{metrics?.inferenceMs !== undefined && <small>{t('Проверка', 'Analysis')} {(metrics.inferenceMs / 1000).toFixed(1)} {t('с', 's')}</small>}</div>
+    <div className="microphone-notes"><span>{t('Распознано:', 'Identified:')}</span><strong>{notes.length ? notes.map(diagnosticNoteName).join(' · ') : '—'}</strong>{metrics?.inferenceMs !== undefined && <small>{t('Проверка', 'Analysis')} {(metrics.inferenceMs / 1000).toFixed(1)} {t('с', 's')}</small>}</div>
     <p className="microphone-help">{t('Сначала измерь фон без игры, затем подстрой чувствительность: пианино должно пересекать отметку на шкале, тишина — нет. Настройки сохраняются на этом устройстве. Чувствительность не меняет строгость проверки нот.', 'Measure the background without playing, then adjust sensitivity: piano should pass the marker and silence should not. Settings are saved on this device. Sensitivity does not change note accuracy requirements.')}</p>
   </section>;
 }

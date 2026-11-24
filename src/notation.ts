@@ -2,6 +2,13 @@ import type { ChordType } from './music';
 import type { ScaleType } from './scales';
 
 export const rootSpellings=['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'];
+// A microphone check has no key signature: show both common spellings so
+// hearing G-flat displayed as F-sharp is not mistaken for a pitch error.
+export function diagnosticNoteName(midi: number) {
+  const names = ['C','C♯/D♭','D','D♯/E♭','E','F','F♯/G♭','G','G♯/A♭','A','A♯/B♭','B'];
+  const octave = Math.floor(midi / 12) - 1;
+  return names[((midi % 12) + 12) % 12].split('/').map(name => `${name}${octave}`).join(' / ');
+}
 const letters=['C','D','E','F','G','A','B'];
 const naturals=[0,2,4,5,7,9,11];
 export function parseChordSymbol(label:string) {
