@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePianoFrames, limitPianoTail } from '../src/audio-decoder';
+import { decodePianoFrames, limitPianoTail, offsetPianoFrames } from '../src/audio-decoder';
 import { Evaluator } from '../src/evaluation';
 
 function prediction(notes: { midi: number; at: number; until?: number; strength?: number; onset?: number }[], count = 100) {
@@ -11,6 +11,36 @@ function prediction(notes: { midi: number; at: number; until?: number; strength?
   return { frames, onsets };
 }
 describe('soft piano attacks', () => {
+  it('recovers a soft chord attack confirmed only in the next overlapping window', () => {
+    const notes=[66,69,73];
+    const input=prediction(notes.map(midi=>({midi,at:5,onset:midi===66?.12:.8})),40);
+    const evaluator=new Evaluator([{label:'F♯m',notes,left:[],right:notes,requireTogether:true}]);
+    const early=decodePianoFrames(input.frames.slice(0,10*88),input.onsets.slice(0,10*88),0);
+    expect(early.at(-1)!.notes).not.toContain(66);
+    for(const frame of early)evaluator.push(frame);
+    for(const frame of decodePianoFrames(input.frames,input.onsets,0))evaluator.push(frame);
+    expect(evaluator.index).toBe(1);
+  });
+  it('preserves true rolled timing when a soft note is confirmed later',()=>{
+    const notes=[66,69,73];
+    const input=prediction(notes.map((midi,i)=>({midi,at:5+i*25,onset:midi===66?.12:.8})),100);
+    const evaluator=new Evaluator([{label:'F♯m',notes,left:[],right:notes,requireTogether:true}]);
+    for(const frame of decodePianoFrames(input.frames.slice(0,10*88),input.onsets.slice(0,10*88),0))evaluator.push(frame);
+    for(const frame of decodePianoFrames(input.frames,input.onsets,0))evaluator.push(frame);
+    expect(evaluator.index).toBe(0);expect(evaluator.feedback().type).toBe('timing');
+  });
+  it('does not reuse previous task attacks and offsets onset metadata on resume',()=>{
+    const notes=[66,69,73],input=prediction(notes.map(midi=>({midi,at:5})),40);
+    const frames=decodePianoFrames(input.frames,input.onsets,0);
+    const next=new Evaluator([{label:'F♯m',notes,left:[],right:notes,requireTogether:true}],.2);
+    for(const frame of frames.filter(frame=>frame.at>.2))next.push(frame);
+    expect(next.index).toBe(0);
+    const resumed=offsetPianoFrames(frames,5);
+    expect(resumed[10].onsetTimes?.[66]).toBeCloseTo(5+5*256/22050);
+    const evaluator=new Evaluator([{label:'F♯m',notes,left:[],right:notes,requireTogether:true}]);
+    for(const frame of resumed)evaluator.push(frame);
+    expect(evaluator.index).toBe(1);
+  });
   it('does not call a block chord rolled when the onset head responds late', () => {
     const notes = [61,64,68];
     const input = prediction(notes.map(midi => ({ midi, at: 5, onset: 0 })));

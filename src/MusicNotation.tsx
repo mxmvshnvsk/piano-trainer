@@ -4,9 +4,12 @@ import './notation.css';
 export function ChordSymbol({label,decorative=false}:{label:string;decorative?:boolean}) {
   const symbol=parseChordSymbol(label);
   if(!symbol)return <span>{label}</span>;
+  // Bravura's sharp descends ~14 units below the baseline, the flat ~7.
+  // Keep their full ink bounds inside the 40-unit viewport with bottom padding.
+  const accidentalBaseline=symbol.accidental==='♯'?24:30;
   return <span className="chord-symbol" role={decorative?undefined:'img'} aria-label={decorative?undefined:label} aria-hidden={decorative||undefined}>
     <span className="symbol-root symbol-part" aria-hidden="true">{symbol.root}</span>
-    {symbol.accidental&&<svg className="symbol-accidental" viewBox="0 0 20 40" aria-hidden="true"><text className="engraving-glyph" x="2" y="33">{symbol.accidental==='♭'?musicGlyphs.flat:musicGlyphs.sharp}</text></svg>}
+    {symbol.accidental&&<svg className="symbol-accidental" viewBox="0 0 20 40" aria-hidden="true"><text className="engraving-glyph" x="2" y={accidentalBaseline}>{symbol.accidental==='♭'?musicGlyphs.flat:musicGlyphs.sharp}</text></svg>}
     {symbol.minor&&<span className="symbol-minor symbol-part" aria-hidden="true">m</span>}
     {symbol.quality&&<span className={`symbol-quality symbol-part ${symbol.raised?'raised':''}`} aria-hidden="true">{symbol.quality}</span>}
   </span>;

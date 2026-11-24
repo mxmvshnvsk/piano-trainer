@@ -150,7 +150,7 @@ footer .install-button{flex-shrink:0;min-height:32px;padding:3px 8px;white-space
 .practice-content{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
 .practice-content>.stage{flex:none;min-height:0;margin-top:auto}
 .practice-content>.transport{margin-bottom:auto}
-.shell:not(.flow-mode) .result-slot:empty{min-height:0;height:0}
+
 
 /* Every mode has a named link; native hash history also works on Pages offline. */
 header{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;padding:6px 22px}
@@ -176,3 +176,35 @@ footer .star-link svg{width:17px;height:17px}footer .star-link:hover{background:
  .footer-end{gap:4px}.footer-status{font-size:9px}
 }
 @media(max-width:355px){.brand{font-size:22px}.brand svg{display:none}.utility-nav .nav-button,.utility-nav .icon-button{width:30px;min-width:30px}header{gap:0 4px;padding-left:12px;padding-right:12px}}
+
+/* Keep task geometry unchanged between listening, grading, and the next task. */
+.stage{--result-height:72px;--face-height:156px}
+.task-face-transition{display:grid;isolation:isolate;width:min(100%,480px);height:var(--face-height);flex-shrink:0}
+.task-layer{grid-area:1/1;min-width:0;width:100%;height:100%;display:grid;place-items:center}
+.task-layer>.task-face{width:max-content;max-width:100%;height:100%;align-content:center}
+.task-enter{animation:task-enter .22s ease-out both}.task-exit{pointer-events:none;animation:task-exit .22s ease-out both}
+@keyframes task-enter{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@keyframes task-exit{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-3px)}}
+.chord-name{min-height:22px;display:flex;align-items:center;justify-content:center}
+.voicing{min-height:18px;display:flex;align-items:center;justify-content:center}
+.result-slot{height:var(--result-height);min-height:var(--result-height);flex-shrink:0}
+.result-card{max-height:100%;overflow:auto;scrollbar-width:thin}.result-card>div{min-width:0}
+.listening-meter-slot{height:3px;min-height:3px;width:90px;flex-shrink:0}
+.listening-meter{height:100%}
+.transport .primary{min-width:148px}
+.flow-mode .task-face-transition{grid-column:1;grid-row:2/5;width:260px;max-width:100%;--face-height:92px;justify-self:start}
+.flow-mode .task-face{grid-row:auto;justify-self:stretch}
+.flow-mode .result-slot{--result-height:64px}.flow-mode .listening-meter-slot{grid-column:1/-1}
+.flow-mode .chord-name,.flow-mode .voicing{justify-content:flex-start}
+@media(max-height:800px){.stage{--face-height:108px;--result-height:64px}.task-face-transition{width:min(100%,420px)}}
+@media(min-width:601px) and (max-width:1024px) and (orientation:portrait){.stage{--face-height:172px}}
+@media(max-width:600px){
+ .stage{--face-height:124px;--result-height:86px}.task-face-transition{width:min(100%,340px)}
+ .chord-name{height:36px;min-height:36px;line-height:1.35}.voicing{height:30px;min-height:30px;line-height:1.35}
+ .transport .primary{min-width:124px}.transport{grid-template-columns:minmax(0,1fr) 124px minmax(0,1fr)}
+ .flow-mode .task-face-transition{width:180px;--face-height:70px}.flow-mode .result-slot{--result-height:80px}
+ .flow-mode .chord-name{height:30px;min-height:30px}.flow-mode .voicing{height:26px;min-height:26px}
+}
+@media(prefers-reduced-motion:reduce){.task-enter,.task-exit{animation:none}.task-exit{visibility:hidden}}
+
+.stage>.chord-name,.stage>.octave-cue,.stage>.voicing{animation:task-copy-enter .22s ease-out}@keyframes task-copy-enter{from{opacity:0}to{opacity:1}}

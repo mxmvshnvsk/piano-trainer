@@ -1,4 +1,6 @@
 import { Select } from './Select';
+import { offsetPianoFrames } from './audio-decoder';
+import { Crossfade } from './Crossfade';
 import { readRoute, routeHash, type Mode, type Panel } from './routes';
 import { cloneElement, isValidElement, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { AudioLines, Bookmark, BookmarkPlus, Check, CircleCheck, CircleAlert, ChevronRight, Download, Keyboard as KeyboardIcon, Languages, LoaderCircle, Moon, Pause, Piano, Play, Infinity as InfinityIcon, Metronome, Star, SlidersHorizontal, Sun, Trash2, X, WifiOff, Mic } from 'lucide-react';
@@ -125,7 +127,7 @@ export function App() {
   function reset(next: Exercise, keepCapture = false) {
     if (keepCapture) flowGate.current.arm(lastFrame.current, evaluator.current.steps.at(-1)!.notes);
     else { cancel(); flowGate.current.clear(); lastFrame.current = -Infinity; }
-    setExercise(next); evaluator.current = new Evaluator(exerciseSteps(next));
+    setExercise(next); evaluator.current = new Evaluator(exerciseSteps(next), keepCapture ? lastFrame.current : -Infinity);
     setStepIndex(0); setHeard([]); setFeedback(null); setLiveFeedback(null); cueSignature.current=''; setError(''); setRemaining(next.settings.seconds);
     remainingRef.current = next.settings.seconds; demoSelected.current = []; if (!keepCapture) demoTime.current = 0; changePhase(keepCapture ? 'listening' : 'ready');
   }
@@ -208,7 +210,7 @@ export function App() {
         listener.current ??= new PianoListener();
         listener.current.setSensitivity(settings.microphoneSensitivity); listener.current.setNoiseFloor(settings.microphoneNoiseFloor); listener.current.setNoiseProfile(settings.microphoneNoiseProfile);
         const previousTime = resume ? (settings.seconds - remainingRef.current) : 0;
-        const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(frames.map(f => ({ ...f, at: f.at + previousTime }))); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(value); });
+        const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(offsetPianoFrames(frames, previousTime)); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(value); });
         if (!started || token !== attemptToken.current) return;
       } catch (reason) { if (token === attemptToken.current) audioError(reason as Error); return; }
     }
@@ -299,6 +301,7 @@ export function App() {
     : phase === 'paused' ? t('Продолжить', 'Resume') : phase === 'ready' ? t('Начать', 'Start') : t('Повторить', 'Try again');
   const patch = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings(s => ({ ...s, [key]: value }));
 
+  const displayIdentity = `${exercise.id}:${number}:${Math.min(stepIndex, steps.length - 1)}`;
   return <div className={`shell ${panel ? 'panel-open' : ''} ${flow && !panel ? 'flow-mode' : ''}`} data-result={cueType}>
     <header>
       <a className="brand" href={routeHash('practice')} aria-label={t('На главную · основной тренажёр','Home · main trainer')} title={t('Вернуться в тренажёр','Return to practice')}><Piano aria-hidden="true" />piano practice</a>
@@ -347,20 +350,22 @@ export function App() {
       <div className="practice-content">
       <main className="stage">
         <div className="eyebrow">{chordExercise ? sequentialChord ? t('Сыграй звуки аккорда по очереди', 'Play the chord one note at a time') : t('Сыграй ноты аккорда одновременно', 'Play the chord notes together') : t(exercise.settings.kind === 'scale' ? 'Сыграй гамму вверх' : 'Сыграй арпеджио вверх')}</div>
+        <Crossfade identity={displayIdentity} className="task-face-transition">
         <div className={`task-face ${phase === 'paused' ? 'still' : ''} result-${cueType}`}>
           <div role="img" aria-label={t('Левая рука','Left hand')} className={`palm left ${exercise.settings.hand === 'right' ? 'inactive' : ''}`} />
           <h1 aria-label={currentStep.label} className={`chord ${currentStep.label.length > 4 ? 'long' : ''}`}><ChordSymbol label={currentStep.label} decorative/></h1>
           <div role="img" aria-label={t('Правая рука','Right hand')} className={`palm ${exercise.settings.hand === 'left' ? 'inactive' : ''}`} />
         </div>
-        <div className="chord-name">{exercise.settings.kind==='scale'?`${tonicName(exercise.root,language)} · ${scaleName(exerciseScale(exercise),language)}`:chordName(currentStep.root ?? exercise.root, currentStep.chord ?? exercise.chord, language)}</div>
-        <div className="octave-cue">{(['left','right'] as const).map(side => currentStep[side].length > 0 && <span key={side}>{exercise.settings.hand === 'both' && (side === 'left' ? t('Л: ','L: ') : t('П: ','R: '))}{octaveName(currentStep[side][0],language,pitchLabel(currentStep[side][0]))} · {pitchLabel(currentStep[side][0])}</span>)}</div>
-        <div className="voicing">{exercise.settings.kind==='scale'?t('Восходящая гамма · одна октава','Ascending scale · one octave'):exercise.settings.kind==='arpeggio'?t('Восходящее арпеджио','Ascending arpeggio'):voicingName(exercise.settings.voicing,language,true)}{chordExercise && ` · ${playingLabel(exercise)}`}</div>
+        </Crossfade>
+        <div key={`chord-name:${displayIdentity}`} className="chord-name">{exercise.settings.kind==='scale'?`${tonicName(exercise.root,language)} · ${scaleName(exerciseScale(exercise),language)}`:chordName(currentStep.root ?? exercise.root, currentStep.chord ?? exercise.chord, language)}</div>
+        <div key={`octave-cue:${displayIdentity}`} className="octave-cue">{(['left','right'] as const).map(side => currentStep[side].length > 0 && <span key={side}>{exercise.settings.hand === 'both' && (side === 'left' ? t('Л: ','L: ') : t('П: ','R: '))}{octaveName(currentStep[side][0],language,pitchLabel(currentStep[side][0]))} · {pitchLabel(currentStep[side][0])}</span>)}</div>
+        <div key={`voicing:${displayIdentity}`} className="voicing">{exercise.settings.kind==='scale'?t('Восходящая гамма · одна октава','Ascending scale · one octave'):exercise.settings.kind==='arpeggio'?t('Восходящее арпеджио','Ascending arpeggio'):voicingName(exercise.settings.voicing,language,true)}{chordExercise && ` · ${playingLabel(exercise)}`}</div>
         {steps.length > 1 && <div className="step-dots" aria-label={`${Math.min(stepIndex+1,steps.length)} / ${steps.length}`}>{steps.map((step,i) => <span className={i < stepIndex ? 'done' : i === stepIndex ? 'current' : ''} key={i}>{exercise.settings.kind === 'progression' && !sequentialChord ? step.label : i+1}</span>)}</div>}
         <div className="result-slot" aria-live="polite" aria-atomic="true">{status && <div key={`${cueType}-${cueRevision}`} className={`result-card ${cueType}`}>
           <span className="result-symbol">{cueType==='success'?<CircleCheck />:cueType==='incorrect'?<CircleAlert />:cueType==='processing'?<LoaderCircle />:cueType==='heard'?<AudioLines />:phase==='paused'?<Pause />:<Mic />}</span>
           <div><p>{status}</p>{message && <small>{message.detail}</small>}{phase === 'success' && settings.auto && !flow && <small>{t('Следующее упражнение через','Next exercise in')} {Math.ceil(countdown)} {t('с','s')}</small>}{phase==='listening' && !message && activity==='uncertain' ? <small>{t('Подстрой микрофон в настройках и повтори','Adjust the microphone in settings and retry')}</small> : phase==='listening' && !message && !flow && <small>{Math.ceil(remaining)} {t('с осталось','s remaining')}</small>}</div>
         </div>}</div>
-        {(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}
+        <div className="listening-meter-slot">{(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}</div>
       </main>
       {(flow || settings.keyboard && (settings.hints || settings.heard)) && <Keyboard names={noteNames} expected={flow || settings.hints ? currentStep.notes : []} target={currentStep.notes} heard={flow || settings.heard ? heard : []} position={currentStep.notes.length===1 ? stepIndex : 0} range={visibleNotes} language={language} interactive={input === 'demo' && phase === 'listening' && activity!=='processing'} onNote={playDemo} />}
       <div className="transport"><button onClick={toggleDifficult} aria-pressed={saved} aria-label={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} title={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} className="save-button">{saved ? <Check /> : <BookmarkPlus />}<span>{saved ? t('В сложном','Added') : t('В сложное','To difficult')}</span></button><button className="primary" onClick={primary}>{['listening','loading','analyzing','paused'].includes(phase) || phase === 'success' && (flow || settings.auto) ? phase === 'paused' ? <Play /> : <Pause /> : <Play />}<span>{primaryLabel}</span></button><button className="next-button" onClick={() => next()}>{t('Дальше','Next')}<ChevronRight /></button></div>

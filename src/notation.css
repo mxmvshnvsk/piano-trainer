@@ -1,6 +1,6 @@
 @font-face{font-family:Bravura;src:url('./assets/Bravura.woff2') format('woff2');font-display:block;font-weight:400;font-style:normal}
 .chord-symbol{display:inline-flex;align-items:baseline;line-height:1;letter-spacing:0;white-space:nowrap;font-weight:400}
-.symbol-accidental{width:.3em;height:.6em;position:relative;top:-.12em;margin-left:.015em;margin-right:.01em;flex-shrink:0;color:var(--accent)}
+.symbol-accidental{overflow:visible;width:.3em;height:.6em;position:relative;top:-.12em;margin-left:.015em;margin-right:.01em;flex-shrink:0;color:var(--accent)}
 .symbol-minor{font-size:.48em;margin-left:.04em;line-height:1}
 .symbol-quality{font-size:.4em;margin-left:.055em;line-height:1}.symbol-quality.raised{position:relative;top:-.65em}
 .chord{background-image:none;background-color:transparent}

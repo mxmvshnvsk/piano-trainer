@@ -1,5 +1,10 @@
 import type { Frame } from './evaluation';
 
+export function offsetPianoFrames(frames: Frame[], offset: number): Frame[] {
+  return frames.map(frame => ({ ...frame, at: frame.at + offset, onsetTimes: frame.onsetTimes &&
+    Object.fromEntries(Object.entries(frame.onsetTimes).map(([note, at]) => [note, at + offset])) }));
+}
+
 // The short tail after a deadline supplies context and sustain for notes that
 // already sounded. A newly played note after the deadline cannot complete a task.
 export function limitPianoTail(frames: Frame[], cutoff: number, eligible: Set<number>): Frame[] {
@@ -13,13 +18,15 @@ export function limitPianoTail(frames: Frame[], cutoff: number, eligible: Set<nu
     }
     // Preserve what was heard for honest keyboard/feedback rendering, while
     // preventing new post-deadline notes from advancing the exercise.
-    return { ...frame, eligible: frame.notes.every(note => eligible.has(note)), onsets: [] };
+    return { ...frame, eligible: frame.notes.every(note => eligible.has(note)), onsets: [], onsetTimes: frame.onsetTimes &&
+      Object.fromEntries(Object.entries(frame.onsetTimes).filter(([, at]) => at <= cutoff)) };
   });
 }
 
 export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, start: number): Frame[] {
   const count = frames.length / 88, output: Frame[] = [];
   const peaks = new Float32Array(88), sustained = new Uint8Array(88);
+  const starts = new Map<number, number>();
   for (let n = 0; n < 88; n++) {
     let run = 0;
     for (let i = 0; i < count; i++) {
@@ -31,7 +38,7 @@ export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, st
     }
   }
   for (let i = 0; i < count; i++) {
-    const notes: number[] = [], attacks: number[] = []; let strength = 0;
+    const notes: number[] = [], attacks: number[] = [], onsetTimes: Record<number, number> = {}; let strength = 0;
     for (let n = 0; n < 88; n++) {
       const probability = frames[i * 88 + n], previous = i ? frames[(i - 1) * 88 + n] : 0;
       const soft = peaks[n] < .35 && sustained[n] === 1;
@@ -44,8 +51,14 @@ export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, st
       const pitchAttack = notes.includes(n + 21) && previous < threshold && (i > 0 || start === 0);
       // Unsupported onset-head peaks (speech/noise, with no pitch) are not notes.
       if (modelAttack && notes.includes(n + 21) || pitchAttack) attacks.push(n + 21);
+      if (!notes.includes(n + 21)) starts.delete(n + 21);
+      else {
+        if (pitchAttack) starts.set(n + 21, start + i * 256 / 22050);
+        const at = starts.get(n + 21);
+        if (at !== undefined) onsetTimes[n + 21] = at;
+      }
     }
-    output.push({ at: start + i * 256 / 22050, notes, onsets: attacks, confidence: notes.length ? strength / notes.length : 0 });
+    output.push({ at: start + i * 256 / 22050, notes, onsets: attacks, onsetTimes, confidence: notes.length ? strength / notes.length : 0 });
   }
   return output;
 }

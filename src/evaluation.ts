@@ -1,5 +1,5 @@
 import { compareNotes, type Feedback, type Step } from './music';
-export type Frame = { at: number; notes: number[]; confidence: number; onsets?: number[]; eligible?: boolean };
+export type Frame = { at: number; notes: number[]; confidence: number; onsets?: number[]; onsetTimes?: Record<number, number>; eligible?: boolean };
 export type LiveFeedback = { feedback: Feedback; step: number; expected: number[] };
 // Evidence must be simultaneous and repeated. We never union all notes in a recording.
 export class Evaluator {
@@ -14,7 +14,7 @@ export class Evaluator {
   private wrongSignature = '';
   private latestError: LiveFeedback | null = null;
   private best: { score: number; heard: number[] } = { score: -Infinity, heard: [] };
-  constructor(readonly steps: Step[]) {}
+  constructor(readonly steps: Step[], private readonly after = -Infinity) {}
   push(frame: Frame): { complete: boolean; index: number } {
     if (frame.at <= this.lastTime || this.index >= this.steps.length) return { complete: this.index >= this.steps.length, index: this.index };
     if (frame.at - this.lastTime > .3) { this.stableSince = null; this.wrongSince = null; }
@@ -25,6 +25,14 @@ export class Evaluator {
     // Preserve its first attack until there has been a meaningful pitch gap.
     for (const note of frame.onsets || []) if (expected.includes(note) &&
       (!this.attacks.has(note) || frame.at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, frame.at);
+    // A later overlapping window may confirm a soft pitch whose leading edge
+    // was previously below confidence. Recover its audio time without replaying
+    // old frames or moving the first attack of a continuously held note.
+    for (const note of heard) {
+      const at = frame.onsetTimes?.[note];
+      if (expected.includes(note) && at !== undefined && Number.isFinite(at) && at > this.after && at <= frame.at &&
+        (!this.attacks.has(note) || at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, at);
+    }
     for (const note of heard) this.lastHeard.set(note, frame.at);
     const attackTimes = expected.map(n => this.attacks.get(n));
     const together = !this.steps[this.index].requireTogether || frame.onsets === undefined ||
