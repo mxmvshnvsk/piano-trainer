@@ -8,6 +8,7 @@ export class Evaluator {
   private lastTime = -1;
   private lastAdvance = -1;
   private attacks = new Map<number, number>();
+  private lastHeard = new Map<number, number>();
   private timingMismatch = false;
   private wrongSince: number | null = null;
   private wrongSignature = '';
@@ -20,7 +21,11 @@ export class Evaluator {
     this.lastTime = frame.at;
     const expected = this.steps[this.index].notes;
     const heard = [...new Set(frame.notes)];
-    for (const note of frame.onsets || []) if (expected.includes(note)) this.attacks.set(note, frame.at);
+    // Noise and the release can produce a second onset peak for a held note.
+    // Preserve its first attack until there has been a meaningful pitch gap.
+    for (const note of frame.onsets || []) if (expected.includes(note) &&
+      (!this.attacks.has(note) || frame.at - (this.lastHeard.get(note) ?? -Infinity) > .08)) this.attacks.set(note, frame.at);
+    for (const note of heard) this.lastHeard.set(note, frame.at);
     const attackTimes = expected.map(n => this.attacks.get(n));
     const together = !this.steps[this.index].requireTogether || frame.onsets === undefined ||
       attackTimes.every(time => time !== undefined) && Math.max(...attackTimes as number[]) - Math.min(...attackTimes as number[]) <= .18;
@@ -53,6 +58,7 @@ export class Evaluator {
         this.stableSince = null;
         this.best = { score: -Infinity, heard: [] };
         this.attacks.clear();
+        this.lastHeard.clear();
         this.timingMismatch = false;
         this.latestError = null; this.wrongSince = null; this.wrongSignature = '';
       }

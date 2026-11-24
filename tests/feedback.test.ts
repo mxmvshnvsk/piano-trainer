@@ -34,6 +34,17 @@ describe('live feedback',()=>{
     expect(evaluator.liveFeedback()?.feedback.missing).toEqual([76]);
   });
 });
+describe('held-note onset noise',()=>{
+  it('does not move a held note attack to a later noise peak',()=>{
+    const e=new Evaluator([{...step,requireTogether:true}]);
+    e.push({at:0,notes:[69],onsets:[69],confidence:.9});
+    for(const at of [.04,.08,.12,.16,.2])e.push({at,notes:[69],onsets:[],confidence:.9});
+    e.push({at:.22,notes:[69],onsets:[69],confidence:.9});
+    e.push({at:.25,notes:step.notes,onsets:[72,76],confidence:.9});
+    expect(e.push({at:.38,notes:step.notes,onsets:[],confidence:.9}).complete).toBe(false);
+    expect(e.feedback().type).toBe('timing');
+  });
+});
 describe('feedback without a keyboard',()=>{
   it('does not claim that notes were missed when all pitches were heard briefly',()=>{
     const evaluator=new Evaluator([{...step,requireTogether:true}]);

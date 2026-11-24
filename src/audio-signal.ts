@@ -15,23 +15,25 @@ export function microphoneGain(sensitivity: number) {
   return 10 ** ((value - 50) * (value < 50 ? .24 : .48) / 20);
 }
 
-export function microphoneThreshold(sensitivity: number, noiseFloor = 0) {
-  const margin = 3 - Math.max(0, Math.min(100, sensitivity)) * .015;
+export function microphoneThreshold(sensitivity: number, noiseFloor = 0, filtered = false) {
+  const value = Math.max(0, Math.min(100, sensitivity));
+  const margin = filtered ? 1.05 + (100 - value) * .0015 : 3 - value * .015;
   return Math.max(.001, noiseFloor * microphoneGain(sensitivity) * margin);
 }
 
-export function microphoneAudible(rms: number, sensitivity: number, noiseFloor = 0) {
-  return rms >= microphoneThreshold(sensitivity, noiseFloor);
+export function microphoneAudible(rms: number, sensitivity: number, noiseFloor = 0, filtered = false) {
+  return rms >= microphoneThreshold(sensitivity, noiseFloor, filtered);
 }
 
 // A quiet instrument should reach the model without relaxing note confidence.
 // Limit gain and gate very low-level noise before inference: the model can
 // otherwise turn even tiny background noise into confident note predictions.
+export const MIN_PIANO_RMS = .0005;
 export function preparePianoWindow(samples: Float32Array) {
   const { mean, rms, peak } = signalLevel(samples);
-  // A two-second window includes silence and decay; its RMS can be lower
+  // A capture window includes silence and decay; its RMS can be lower
   // than the short worklet block that triggered recognition.
-  if (rms < .0005) return new Float32Array(samples.length);
+  if (rms < MIN_PIANO_RMS) return new Float32Array(samples.length);
   const gain = peak > .95 ? .95 / peak : Math.min(16, Math.max(1, .2 / peak));
   return samples.map(sample => (sample - mean) * gain);
 }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PianoListener } from '../src/audio';
+import { NOISE_PROFILE_SIZE } from '../src/piano-noise';
 import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES } from '../src/audio-timing';
 
 describe('microphone attempts', () => {
@@ -25,7 +26,7 @@ describe('microphone attempts', () => {
     terminate = vi.fn();
     respond = true;
     ready = true;
-    postMessage = vi.fn((data: { type: string; id: number; start: number; samples: Float32Array; final?: boolean }) => {
+    postMessage = vi.fn((data: { type: string; id: number; start: number; samples: Float32Array; final?: boolean; noiseProfile?: number[]; inputGain?: number }) => {
       queueMicrotask(() => {
         if (data.type === 'init' && this.ready) this.onmessage?.({ data: { type: 'ready', backend: 'cpu' } });
         else if (data.type !== 'init' && this.respond) this.onmessage?.({ data: { type: 'frames', id: data.id, start: data.start, frames: new Float32Array(0), onsets: new Float32Array(0) } });
@@ -73,7 +74,7 @@ describe('microphone attempts', () => {
     expect(analysis).toBeDefined();
     expect(analysis!.samples.length).toBeGreaterThanOrEqual(MIN_ANALYSIS_SAMPLES);
     expect(analysis!.samples.length).toBeLessThan(11025);
-    expect(Math.max(...analysis!.samples)).toBeCloseTo(.08, 3);
+    expect(Math.max(...analysis!.samples)).toBeCloseTo(.005, 4);
     expect(activity).toHaveBeenCalledWith('heard');
     expect(activity).toHaveBeenCalledWith('processing');
     expect(level.mock.calls.at(-1)![0]).toBeGreaterThan(.15);
@@ -167,6 +168,26 @@ describe('microphone attempts', () => {
     expect(workers[0].postMessage.mock.calls.some(([data]) => data.type === 'analyze')).toBe(false);
     listener.setRecognitionEnabled(true); play();
     expect(workers[0].postMessage.mock.calls.some(([data]) => data.type === 'analyze')).toBe(true);
+  });
+  it('measures raw background spectra, sends only the profile, and discards canceled captures',async()=>{
+    await listener.start(vi.fn(),vi.fn(),vi.fn());
+    listener.beginNoiseMeasurement();play(.004,48);
+    const profile=listener.finishNoiseMeasurement();
+    expect(profile).toHaveLength(NOISE_PROFILE_SIZE);
+    expect(profile.some(power=>power>0)).toBe(true);
+    expect(workers[0].postMessage.mock.calls.some(([data])=>data.type==='analyze')).toBe(false);
+    listener.setSensitivity(100);listener.setRecognitionEnabled(true);play(.004,9);
+    const job=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
+    expect(job.noiseProfile).toEqual(profile);expect(job.inputGain).toBeGreaterThan(15);
+    listener.beginNoiseMeasurement();play(.004,9);listener.stop();
+    expect(listener.finishNoiseMeasurement()).toEqual([]);
+  });
+  it('distinguishes suppressed background from an unrecognized piano attempt',async()=>{
+    const activity=vi.fn();await listener.start(vi.fn(),vi.fn(),vi.fn(),activity);
+    workers[0].respond=false;play(.004,9);
+    const job=workers[0].postMessage.mock.calls.find(([data])=>data.type==='analyze')![0];
+    workers[0].onmessage?.({data:{type:'frames',id:job.id,start:job.start,frames:new Float32Array(88),onsets:new Float32Array(88),noiseOnly:true}});
+    expect(activity.mock.calls.at(-1)).toEqual(['background']);
   });
   it('reports uncertain recognition explicitly when the model returns no notes', async () => {
     const activity = vi.fn();

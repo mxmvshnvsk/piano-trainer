@@ -90,3 +90,11 @@ describe('microphone permission timeout', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe('profiled input trigger',()=>{
+  it('allows a short quiet piano above measured noise to reach the denoiser',()=>{
+    expect(microphoneThreshold(50,.003,true)).toBeLessThan(microphoneThreshold(50,.003));
+    expect(microphoneAudible(.004,50,.003,true)).toBe(true);
+    expect(microphoneAudible(.003,50,.003,true)).toBe(false);
+  });
+});

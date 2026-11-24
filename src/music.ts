@@ -1,5 +1,6 @@
 import { scales, diatonicModes, type ScaleType, type ScaleChoice } from './scales';
 import { rootSpellings, chordDegree, scaleDegree, spellPitch } from './notation';
+import { restoreNoiseProfile } from './piano-noise';
 export type Hand = 'left' | 'right' | 'both';
 export type Kind = 'chord' | 'scale' | 'arpeggio' | 'progression';
 export type Playing = 'together' | 'sequential';
@@ -8,10 +9,10 @@ export type Settings = {
   chordPlaying: Playing | 'alternating';
   scaleMode: ScaleChoice; scaleTonic: 'any' | number;
   voicing: 'root' | 'first' | 'wide'; octave: number; mood: string;
-  level: 'basic' | 'triads' | 'extended' | 'all'; seconds: number; gap: number; microphoneSensitivity: number; microphoneNoiseFloor: number;
+  level: 'basic' | 'triads' | 'extended' | 'all'; seconds: number; gap: number; microphoneSensitivity: number; microphoneNoiseFloor: number; microphoneNoiseProfile: number[];
   keyboard: boolean; hints: boolean; heard: boolean; auto: boolean; difficultOnly: boolean;
 };
-export const defaults: Settings = { hand: 'right', kind: 'chord', order: 'random', chordPlaying: 'together', scaleMode:'auto', scaleTonic:'any', voicing: 'root', octave: 4, mood: 'all', level: 'basic', seconds: 15, gap: 3, microphoneSensitivity: 50, microphoneNoiseFloor: 0, keyboard: true, hints: true, heard: true, auto: true, difficultOnly: false };
+export const defaults: Settings = { hand: 'right', kind: 'chord', order: 'random', chordPlaying: 'together', scaleMode:'auto', scaleTonic:'any', voicing: 'root', octave: 4, mood: 'all', level: 'basic', seconds: 15, gap: 3, microphoneSensitivity: 50, microphoneNoiseFloor: 0, microphoneNoiseProfile: [], keyboard: true, hints: true, heard: true, auto: true, difficultOnly: false };
 export const pitchClasses = rootSpellings;
 export const noteName = (midi: number) => `${pitchClasses[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
 export const octaveIndex = (midi: number) => Math.floor(midi / 12) - 1;
@@ -63,7 +64,8 @@ export function createExercise(settings: Settings, previous?: Exercise, random =
   const scale:ScaleType|undefined=settings.kind!=='scale'?undefined:settings.scaleMode==='diatonic'?randomItem(diatonicModes,random):settings.scaleMode==='auto'?(chords[chord].intervals.includes(3)?'aeolian':'ionian'):settings.scaleMode;
   const playing: Playing = settings.chordPlaying === 'alternating' ? previous && playingMode(previous) === 'together' ? 'sequential' : 'together' : settings.chordPlaying;
   const id = [root, settings.kind==='scale'?scale:chord, settings.kind, settings.hand, settings.voicing, settings.mood, settings.kind === 'chord' || settings.kind === 'progression' ? playing : 'sequence'].join(':');
-  return { id, root, chord, settings: { ...settings }, playing, scale };
+  // A background spectrum belongs to this device, not each saved exercise.
+  return { id, root, chord, settings: { ...settings, microphoneNoiseProfile: [] }, playing, scale };
 }
 function voices(root: number, type: ChordType, settings: Settings): Omit<Step, 'label'> {
   let notes = chords[type].intervals.map(i => root + i);
@@ -134,5 +136,6 @@ export function restoreSettings(value: unknown): Settings {
   if (typeof v.gap === 'number' && Number.isFinite(v.gap)) next.gap = Math.max(0, Math.min(10, v.gap));
   if (typeof v.microphoneSensitivity === 'number' && Number.isFinite(v.microphoneSensitivity)) next.microphoneSensitivity = Math.max(0, Math.min(100, v.microphoneSensitivity));
   if (typeof v.microphoneNoiseFloor === 'number' && Number.isFinite(v.microphoneNoiseFloor)) next.microphoneNoiseFloor = Math.max(0, Math.min(.1, v.microphoneNoiseFloor));
+  next.microphoneNoiseProfile = restoreNoiseProfile(v.microphoneNoiseProfile);
   return next;
 }

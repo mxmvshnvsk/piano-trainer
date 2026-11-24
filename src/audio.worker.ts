@@ -1,7 +1,9 @@
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import { evaluatePianoWindow } from './piano-model';
-import { MIN_ANALYSIS_SAMPLES } from './audio-timing';
+import { MIN_ANALYSIS_SAMPLES, MODEL_CONTEXT_FRAMES, MODEL_HOP_SAMPLES } from './audio-timing';
+import { suppressPianoNoise } from './piano-noise';
+import { MIN_PIANO_RMS, preparePianoWindow, signalLevel } from './audio-signal';
 
 let model: tf.GraphModel;
 let loading: Promise<void> | undefined;
@@ -20,7 +22,7 @@ async function initialize(base: string) {
   }
 }
 self.onmessage = async (event: MessageEvent) => {
-  const { type, id, samples, base, start, final = false } = event.data;
+  const { type, id, samples, base, start, final = false, noiseProfile = [], inputGain = 1 } = event.data;
   try {
     if (type === 'init') {
       loading ??= initialize(base);
@@ -29,8 +31,14 @@ self.onmessage = async (event: MessageEvent) => {
       return;
     }
     await loading;
-    const { frames, onsets } = await evaluatePianoWindow(model, samples, final);
-    self.postMessage({ type: 'frames', id, start, frames, onsets }, { transfer: [frames.buffer, onsets.buffer] });
+    const cleaned = suppressPianoNoise(samples, noiseProfile, inputGain);
+    const quiet = signalLevel(cleaned).rms < MIN_PIANO_RMS;
+    const count = Math.max(0, Math.floor(samples.length / MODEL_HOP_SAMPLES) - (final ? 0 : MODEL_CONTEXT_FRAMES));
+    // Keep capture timestamps/release evidence, but do not run the network on
+    // a window that normalization would mute anyway.
+    const { frames, onsets } = quiet ? { frames: new Float32Array(count * 88), onsets: new Float32Array(count * 88) }
+      : await evaluatePianoWindow(model, preparePianoWindow(cleaned), final);
+    self.postMessage({ type: 'frames', id, start, frames, onsets, noiseOnly: quiet && noiseProfile.length > 0 }, { transfer: [frames.buffer, onsets.buffer] });
   } catch (error) {
     self.postMessage({ type: 'error', id, message: error instanceof Error ? error.message : String(error) });
   }

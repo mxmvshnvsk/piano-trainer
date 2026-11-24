@@ -1,11 +1,12 @@
 import type { Frame } from './evaluation';
 import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES, ANALYSIS_HOP_SAMPLES, PIANO_SAMPLE_RATE } from './audio-timing';
-import { microphoneAudible, microphoneGain, preparePianoWindow, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
+import { microphoneAudible, microphoneGain, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
 import { decodePianoFrames, limitPianoTail } from './audio-decoder';
+import { estimateNoiseProfile, restoreNoiseProfile } from './piano-noise';
 export class MicrophoneError extends Error {
   constructor(readonly reason: 'permission' | 'unavailable' | 'model' | 'device' | 'slow') { super(reason); }
 }
-export type AudioActivity = 'listening' | 'heard' | 'processing' | 'uncertain';
+export type AudioActivity = 'listening' | 'heard' | 'processing' | 'uncertain' | 'background';
 export type MicrophoneMetrics = { rms: number; peak: number; inputRms: number; inputPeak: number; sampleRate: number; backend?: string; inferenceMs?: number };
 export class PianoListener {
   private worker?: Worker;
@@ -30,6 +31,8 @@ export class PianoListener {
   private lastSound = -Infinity;
   private sensitivity = 50;
   private noiseFloor = 0;
+  private noiseProfile: number[] = [];
+  private noiseCapture?: { chunks: Float32Array[]; length: number };
   private recognitionEnabled = true;
   private signalRevision = 0;
   private jobRevision = 0;
@@ -52,6 +55,24 @@ export class PianoListener {
     this.signalRevision++;
     this.samples = new Float32Array(0); this.lastSubmitted = this.total; this.lastSound = -Infinity;
   }
+  setNoiseProfile(value: number[]) {
+    const profile = restoreNoiseProfile(value);
+    if (profile.length === this.noiseProfile.length && profile.every((power, i) => power === this.noiseProfile[i])) return;
+    this.noiseProfile = profile; this.signalRevision++;
+    this.samples = new Float32Array(0); this.lastSubmitted = this.total; this.lastSound = -Infinity;
+  }
+  beginNoiseMeasurement() {
+    this.setRecognitionEnabled(false);
+    this.noiseCapture = { chunks: [], length: 0 };
+  }
+  finishNoiseMeasurement() {
+    const capture = this.noiseCapture; this.noiseCapture = undefined;
+    if (!capture) return [];
+    const samples = new Float32Array(capture.length); let offset = 0;
+    for (const chunk of capture.chunks) { samples.set(chunk, offset); offset += chunk.length; }
+    const profile = estimateNoiseProfile(samples); this.setNoiseProfile(profile);
+    return profile;
+  }
   setRecognitionEnabled(value: boolean) {
     if (value === this.recognitionEnabled) return;
     this.recognitionEnabled = value; this.signalRevision++;
@@ -73,7 +94,7 @@ export class PianoListener {
           if (data.id === this.generation) {
             if (this.jobRevision === this.signalRevision && this.recognitionEnabled) {
               const recognized = this.decode(data.frames, data.onsets, data.start);
-              if (data.id === this.generation) this.reportActivity(recognized ? 'listening' : 'uncertain');
+              if (data.id === this.generation) this.reportActivity(recognized ? 'listening' : data.noiseOnly ? 'background' : 'uncertain');
             } else this.reportActivity('listening');
           }
           this.resolveJob?.();
@@ -114,13 +135,17 @@ export class PianoListener {
       this.node.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
         if (!this.running || generation !== this.generation) return;
         const raw = resampler.push(data);
+        if (this.noiseCapture && this.noiseCapture.length < PIANO_SAMPLE_RATE * 2) {
+          const chunk = raw.slice(0, PIANO_SAMPLE_RATE * 2 - this.noiseCapture.length);
+          this.noiseCapture.chunks.push(chunk); this.noiseCapture.length += chunk.length;
+        }
         const { rms: inputRms, peak: inputPeak } = signalLevel(raw);
         const gain = microphoneGain(this.sensitivity);
         const samples = raw.map(sample => sample * gain);
         const { rms, peak } = signalLevel(samples);
         this.onLevel(Math.min(1, Math.sqrt(rms * 12)));
         onMetrics({ rms, peak, inputRms, inputPeak, sampleRate: context.sampleRate, backend: this.backend, inferenceMs: this.inferenceMs });
-        if (microphoneAudible(rms, this.sensitivity, this.noiseFloor)) {
+        if (microphoneAudible(rms, this.sensitivity, this.noiseFloor, this.noiseProfile.length > 0)) {
           if (!this.busy && this.activity === 'listening') this.reportActivity('heard');
           this.lastSound = this.total;
         }
@@ -150,7 +175,9 @@ export class PianoListener {
   }
   private async submit(final = false) {
     if (!this.worker || !this.recognitionEnabled || !this.samples.length || this.total - this.lastSound > MAX_ANALYSIS_SAMPLES) return;
-    const input = preparePianoWindow(this.samples);
+    // Noise spectra are measured before gain. Normalize only after denoising in
+    // the worker, otherwise automatic gain would also amplify the residual noise.
+    const input = this.samples.slice();
     const start = (this.total - input.length) / PIANO_SAMPLE_RATE;
     this.lastSubmitted = this.total;
     const job = new Promise<void>(resolve => { this.resolveJob = resolve; });
@@ -163,7 +190,7 @@ export class PianoListener {
       this.jobError = new MicrophoneError('slow');
       this.dispose(); this.onError(this.jobError);
     }, 30000);
-    this.worker.postMessage({ type: 'analyze', id: this.generation, samples: input, start, final }, [input.buffer]);
+    this.worker.postMessage({ type: 'analyze', id: this.generation, samples: input, start, final, noiseProfile: this.noiseProfile, inputGain: microphoneGain(this.sensitivity) }, [input.buffer]);
     await job;
     clearTimeout(timeout); this.inferenceMs = performance.now() - started;
     if (this.busy === job) this.busy = undefined;
@@ -206,6 +233,6 @@ export class PianoListener {
     this.node?.port.close(); this.source?.disconnect(); this.node?.disconnect(); this.mute?.disconnect();
     this.source = undefined; this.node = undefined; this.mute = undefined;
   }
-  stop() { this.generation++; this.recognitionEnabled = true; this.releaseCapture(); }
+  stop() { this.generation++; this.recognitionEnabled = true; this.noiseCapture = undefined; this.releaseCapture(); }
   dispose() { this.stop(); void this.context?.close().catch(() => {}); this.context = undefined; this.worker?.terminate(); this.worker = undefined; this.initialized = undefined; this.resolveJob?.(); this.busy = undefined; }
 }

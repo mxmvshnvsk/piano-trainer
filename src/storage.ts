@@ -7,5 +7,5 @@ export function write(key: string, value: unknown) { try { localStorage.setItem(
 export function readDifficult(): Exercise[] {
   const data: unknown = read('difficult', []);
   if (!Array.isArray(data)) return [];
-  return data.filter(e => e && typeof e.id === 'string' && Number.isInteger(e.root) && e.root >= 48 && e.root <= 83 && Object.hasOwn(chords, e.chord)).slice(0, 200).map(e => ({ ...e, scale:typeof e.scale==='string'&&Object.hasOwn(scales,e.scale)?e.scale:undefined, playing: e.playing === 'together' || e.playing === 'sequential' ? e.playing : undefined, settings: restoreSettings(e.settings) }));
+  return data.filter(e => e && typeof e.id === 'string' && Number.isInteger(e.root) && e.root >= 48 && e.root <= 83 && Object.hasOwn(chords, e.chord)).slice(0, 200).map(e => ({ ...e, scale:typeof e.scale==='string'&&Object.hasOwn(scales,e.scale)?e.scale:undefined, playing: e.playing === 'together' || e.playing === 'sequential' ? e.playing : undefined, settings: { ...restoreSettings(e.settings), microphoneNoiseProfile: [] } }));
 }

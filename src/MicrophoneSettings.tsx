@@ -28,8 +28,8 @@ function dominantNotes(frames: Frame[]) {
   return [...groups.values()].sort((a, b) => b.count - a.count)[0]?.notes || [];
 }
 
-export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensitivity, onNoiseFloor, language }: {
-  listener: PianoListener; sensitivity: number; noiseFloor: number; onSensitivity: (value: number) => void; onNoiseFloor: (value: number) => void; language: Language;
+export function MicrophoneSettings({ listener, sensitivity, noiseFloor, noiseProfile, onSensitivity, onNoiseFloor, language }: {
+  listener: PianoListener; sensitivity: number; noiseFloor: number; noiseProfile: number[]; onSensitivity: (value: number) => void; onNoiseFloor: (value: number, profile?: number[]) => void; language: Language;
 }) {
   const t = (ru: string, en: string) => language === 'ru' ? ru : en;
   const id = useId();
@@ -43,6 +43,7 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
   const calibration = useRef<{ until: number; samples: number[] } | null>(null);
   const [calibrating, setCalibrating] = useState(false);
   useEffect(() => { listener.setNoiseFloor(noiseFloor); }, [listener, noiseFloor]);
+  useEffect(() => { listener.setNoiseProfile(noiseProfile); }, [listener, noiseProfile]);
   useEffect(() => { listener.setSensitivity(sensitivity); }, [listener, sensitivity]);
   useEffect(() => () => { token.current++; listener.stop(); }, [listener]);
   useEffect(() => {
@@ -54,7 +55,7 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
   async function start() {
     const attempt = ++token.current;
     setPhase('loading'); setError(''); setMetrics(undefined); setNotes([]); setResult('waiting');
-    listener.setSensitivity(sensitivity); listener.setNoiseFloor(noiseFloor);
+    listener.setSensitivity(sensitivity); listener.setNoiseFloor(noiseFloor); listener.setNoiseProfile(noiseProfile);
     const fail = (reason: Error) => {
       if (attempt !== token.current) return;
       calibration.current = null; setCalibrating(false); listener.stop(); setPhase('error'); setMetrics(undefined);
@@ -74,7 +75,8 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
             const sorted = measurement.samples.sort((a, b) => a - b);
             const floor = Math.max(.0000001, Math.min(.1, sorted[Math.floor((sorted.length - 1) * .9)] || 0));
             calibration.current = null; setCalibrating(false);
-            onNoiseFloor(floor); listener.setNoiseFloor(floor); listener.setRecognitionEnabled(true); setResult('waiting'); setNotes([]);
+            const profile = listener.finishNoiseMeasurement();
+            onNoiseFloor(floor, profile); listener.setNoiseFloor(floor); listener.setRecognitionEnabled(true); setResult('waiting'); setNotes([]);
           }
         }
       });
@@ -85,8 +87,9 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
   const db = metrics?.rms ? Math.min(0, Math.max(-72, 20 * Math.log10(metrics.rms))) : -72;
   const gainDb = Math.round(200 * Math.log10(microphoneGain(sensitivity))) / 10;
   const loud = !!metrics && (metrics.peak >= .9 || metrics.inputPeak >= .98);
-  const audible = !!metrics && microphoneAudible(metrics.rms, sensitivity, noiseFloor);
-  const thresholdDb = Math.max(-72, 20 * Math.log10(microphoneThreshold(sensitivity, noiseFloor)));
+  const filtered = noiseProfile.length > 0;
+  const audible = !!metrics && microphoneAudible(metrics.rms, sensitivity, noiseFloor, filtered);
+  const thresholdDb = Math.max(-72, 20 * Math.log10(microphoneThreshold(sensitivity, noiseFloor, filtered)));
   const signal = calibrating ? t('Измеряю фон · не играй', 'Measuring background · do not play') : !active || !metrics ? t('Микрофон выключен', 'Microphone off')
     : loud ? metrics.inputPeak >= .98 ? t('Перегрузка входа · сделай инструмент тише', 'Input clipping · turn the instrument down') : t('Слишком громко · снизь чувствительность', 'Too loud · lower sensitivity')
     : audible ? t('Сигнал есть', 'Signal received') : t('Тихо · сыграй ноту или повысь чувствительность', 'Quiet · play a note or raise sensitivity');
@@ -94,16 +97,18 @@ export function MicrophoneSettings({ listener, sensitivity, noiseFloor, onSensit
     : phase === 'loading' ? t('Готовлю распознавание… Первый запуск может занять больше времени.', 'Preparing recognition… The first launch may take longer.')
     : phase === 'off' ? t('Включи проверку и сыграй несколько нот без педали.', 'Start the check and play a few notes without the pedal.')
     : activity === 'processing' ? t('Звук получен · определяю ноты…', 'Sound received · identifying notes…')
+    : activity === 'background' ? t('Фон подавлен · жду ноты', 'Background reduced · waiting for notes')
     : result === 'uncertain' ? t('Звук есть, но ноты не определены. Подстрой уровень и повтори.', 'Sound received, but no notes identified. Adjust the level and retry.')
     : result === 'recognized' ? t('Ноты распознаны', 'Notes identified') : t('Сыграй ноту или аккорд', 'Play a note or chord');
   return <section className="microphone-settings" aria-labelledby={`${id}-title`}>
     <div className="microphone-heading"><h3 id={`${id}-title`}>{t('Микрофон', 'Microphone')}</h3><button className="microphone-check" onClick={active ? stop : () => void start()}>{active ? <Square /> : <Mic />}{active ? t('Остановить', 'Stop') : t('Проверить микрофон', 'Check microphone')}</button></div>
     <div className="microphone-slider"><label htmlFor={`${id}-sensitivity`}>{t('Чувствительность', 'Sensitivity')} <strong>{sensitivity}%</strong><small>{gainDb > 0 ? '+' : ''}{gainDb} dB</small></label><input aria-label={t('Чувствительность микрофона', 'Microphone sensitivity')} id={`${id}-sensitivity`} type="range" min="0" max="100" value={sensitivity} onChange={event => { onSensitivity(+event.target.value); listener.setSensitivity(+event.target.value); }} /><span className="microphone-scale"><span>{t('Меньше', 'Lower')}</span><button type="button" onClick={() => onSensitivity(50)}>{t('Сбросить', 'Reset')}</button><span>{t('Больше', 'Higher')}</span></span></div>
-    <div className="microphone-calibration"><button disabled={!active || !metrics || calibrating} onClick={() => { calibration.current = { until: performance.now() + 2000, samples: [] }; listener.setRecognitionEnabled(false); setNotes([]); setResult('waiting'); setActivity('listening'); setCalibrating(true); }}>{calibrating ? t('Измеряю фон…', 'Measuring background…') : t('Измерить фон · 2 с тишины', 'Measure background · 2 s of silence')}</button>{noiseFloor > 0 && <button disabled={calibrating} onClick={() => { onNoiseFloor(0); listener.setNoiseFloor(0); }}>{t('Сбросить фон', 'Reset background')}</button>}<span>{noiseFloor > 0 ? `${t('Фон', 'Background')} ${noiseFloor < .0002512 ? '≤ −72' : Math.round(20 * Math.log10(noiseFloor))} dB` : t('Фон не измерен', 'Background not measured')}</span></div>
+    <div className="microphone-calibration"><button disabled={!active || !metrics || calibrating} onClick={() => { calibration.current = { until: performance.now() + 2000, samples: [] }; listener.beginNoiseMeasurement(); setNotes([]); setResult('waiting'); setActivity('listening'); setCalibrating(true); }}>{calibrating ? t('Измеряю фон…', 'Measuring background…') : t('Измерить фон · 2 с тишины', 'Measure background · 2 s of silence')}</button>{noiseFloor > 0 && <button disabled={calibrating} onClick={() => { onNoiseFloor(0, []); listener.setNoiseFloor(0); listener.setNoiseProfile([]); }}>{t('Сбросить фон', 'Reset background')}</button>}<span>{noiseFloor > 0 ? `${t('Фон', 'Background')} ${noiseFloor < .0002512 ? '≤ −72' : Math.round(20 * Math.log10(noiseFloor))} dB` : t('Фон не измерен', 'Background not measured')}</span></div>
+    {filtered && <p className="microphone-filter-status">{t('Подавление фона включено', 'Background reduction enabled')}</p>}
     <div className={`microphone-meter ${loud ? 'overload' : ''}`} role="meter" aria-label={t('Уровень микрофона после настройки', 'Microphone level after adjustment')} aria-valuemin={-72} aria-valuemax={0} aria-valuenow={Math.round(db)} aria-valuetext={active && metrics ? `${Math.round(db)} dB` : t('Выключен', 'Off')}><span style={{ width: active && metrics ? `${(db + 72) / 72 * 100}%` : '0%' }} /><i aria-hidden="true" style={{ left: `${Math.min(100, (thresholdDb + 72) / 72 * 100)}%` }} /></div>
     <div className="microphone-signal"><span>{active && phase === 'loading' && !metrics ? t('Подключаю микрофон…', 'Connecting microphone…') : signal}</span><span>{active && metrics ? `${Math.round(db)} dB` : '—'}</span></div>
     <div className="microphone-recognition" role="status">{active && (phase === 'loading' || activity === 'processing') && <LoaderCircle className="microphone-spinner" />}<span>{recognition}</span></div>
     <div className="microphone-notes"><span>{t('Распознано:', 'Identified:')}</span><strong>{notes.length ? notes.map(diagnosticNoteName).join(' · ') : '—'}</strong>{metrics?.inferenceMs !== undefined && <small>{t('Проверка', 'Analysis')} {(metrics.inferenceMs / 1000).toFixed(1)} {t('с', 's')}</small>}</div>
-    <p className="microphone-help">{t('Сначала измерь фон без игры, затем подстрой чувствительность: пианино должно пересекать отметку на шкале, тишина — нет. Настройки сохраняются на этом устройстве. Чувствительность не меняет строгость проверки нот.', 'Measure the background without playing, then adjust sensitivity: piano should pass the marker and silence should not. Settings are saved on this device. Sensitivity does not change note accuracy requirements.')}</p>
+    <p className="microphone-help">{noiseFloor > 0 && !filtered && t('Измерь фон заново, чтобы включить подавление шума. ', 'Measure the background again to enable noise reduction. ')}{t('Измеряй фон без игры. При заметном изменении шума повтори измерение. Затем подстрой чувствительность: пианино должно пересекать отметку, тишина — нет. Настройки сохраняются на этом устройстве.', 'Measure the background without playing. Repeat if the noise changes noticeably. Then adjust sensitivity: piano should pass the marker and silence should not. Settings are saved on this device.')}</p>
   </section>;
 }

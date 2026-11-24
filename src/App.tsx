@@ -178,7 +178,7 @@ export function App() {
       changePhase('loading');
       try {
         listener.current ??= new PianoListener();
-        listener.current.setSensitivity(settings.microphoneSensitivity); listener.current.setNoiseFloor(settings.microphoneNoiseFloor);
+        listener.current.setSensitivity(settings.microphoneSensitivity); listener.current.setNoiseFloor(settings.microphoneNoiseFloor); listener.current.setNoiseProfile(settings.microphoneNoiseProfile);
         const previousTime = resume ? (settings.seconds - remainingRef.current) : 0;
         const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(frames.map(f => ({ ...f, at: f.at + previousTime }))); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(value); });
         if (!started || token !== attemptToken.current) return;
@@ -260,7 +260,7 @@ export function App() {
   const ordinal = exercise.settings.kind === 'progression' ? steps.slice(0,feedbackStep).filter(s=>s.label===steps[feedbackStep]?.label).length : feedbackStep;
   const message = shownFeedback ? feedbackText(shownFeedback,feedbackTarget,ordinal,language,noteNames) : null;
   const status = phase === 'ready' ? '' : phase === 'loading' ? t('Готовлю микрофон и распознавание…', 'Preparing microphone and recognition…')
-    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу звук · проверяю ноты…','Sound received · checking notes…') : activity === 'uncertain' ? t('Звук есть · ноты не определены','Sound received · no notes identified') : activity === 'heard' ? t('Слышу звук','Sound received') : t('Слушаю','Listening'))
+    : phase === 'listening' ? message?.title || (activity === 'processing' ? t('Слышу звук · проверяю ноты…','Sound received · checking notes…') : activity === 'background' ? t('Фон подавлен · жду ноты','Background reduced · waiting for notes') : activity === 'uncertain' ? t('Звук есть · ноты не определены','Sound received · no notes identified') : activity === 'heard' ? t('Слышу звук','Sound received') : t('Слушаю','Listening'))
     : phase === 'analyzing' ? t('Проверяю последние ноты…', 'Checking the last notes…')
     : phase === 'paused' ? t('Тренировка на паузе', 'Practice paused') : phase === 'success' ? t('Всё верно', 'All correct')
     : phase === 'feedback' ? message?.title || '' : microphoneErrorText(error, language);
@@ -312,7 +312,7 @@ export function App() {
         <Field label={`${t('Пауза между заданиями','Between exercises')} · ${settings.gap} ${t('с','s')}`}><input disabled={flow} type="range" min="0" max="10" value={settings.gap} onChange={e => patch('gap', +e.target.value)} /></Field>
         <Field label={t('Ввод','Input')}><Select value={input} onChange={e => { cancel(); changePhase('ready'); setInput(e.target.value as typeof input); }}><option value="microphone">{t('Микрофон','Microphone')}</option><option value="demo">{t('Демо · экранные клавиши','Demo · on-screen keys')}</option></Select></Field>
       </div>
-      {input === 'microphone' && <MicrophoneSettings listener={listener.current ??= new PianoListener()} sensitivity={settings.microphoneSensitivity} noiseFloor={settings.microphoneNoiseFloor} onSensitivity={value => patch('microphoneSensitivity', value)} onNoiseFloor={value => patch('microphoneNoiseFloor', value)} language={language} />}
+      {input === 'microphone' && <MicrophoneSettings listener={listener.current ??= new PianoListener()} sensitivity={settings.microphoneSensitivity} noiseFloor={settings.microphoneNoiseFloor} noiseProfile={settings.microphoneNoiseProfile} onSensitivity={value => patch('microphoneSensitivity', value)} onNoiseFloor={(value, profile) => setSettings(s => ({...s, microphoneNoiseFloor:value, microphoneNoiseProfile:profile ?? s.microphoneNoiseProfile}))} language={language} />}
       <div className="switches"><label><input type="checkbox" disabled={flow} checked={flow || settings.keyboard} onChange={e=>patch('keyboard',e.target.checked)} />{t('Показывать клавиатуру','Show keyboard')}</label>{(['hints','heard','auto'] as const).map((key,i) => <label key={key}><input type="checkbox" disabled={flow || key !== 'auto' && !settings.keyboard} checked={flow || settings[key]} onChange={e => patch(key, e.target.checked)} />{t(['Подсвечивать ноты задания','Подсвечивать сыгранные ноты','Переходить автоматически'][i])}</label>)}</div>
       <p className="setting-note">{t('Настроения — условные ассоциации. Играй тембром grand piano без педали.', 'Moods are suggested associations. Use a grand piano sound without pedal.')}</p>
       <button className="primary apply" onClick={() => { reset(!flow && settings.difficultOnly && difficult.length ? difficult[0] : createExercise(activeSettings)); setPanel(null); }}>{t('К практике','Practice')}</button>

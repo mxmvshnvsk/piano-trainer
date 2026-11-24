@@ -65,9 +65,18 @@ describe('exercise generation', () => {
     expect(steps.map(s=>s.label)).toEqual(['C','C','C','F','F','F','G','G','G']);
     expect(steps.every(s=>s.notes.length===1)).toBe(true);
   });
+  it('keeps device noise profiles out of saved exercise settings',()=>{
+    const settings={...defaults,microphoneNoiseProfile:new Array(1025).fill(.001)};
+    expect(createExercise(settings).settings.microphoneNoiseProfile).toEqual([]);
+    expect(settings.microphoneNoiseProfile).toHaveLength(1025);
+  });
   it('restores microphone sensitivity without breaking older saved exercises', () => {
     expect(restoreSettings({}).microphoneSensitivity).toBe(50);
     expect(restoreSettings({}).microphoneNoiseFloor).toBe(0);
+    expect(restoreSettings({microphoneNoiseFloor:.003}).microphoneNoiseProfile).toEqual([]);
+    const profile=new Array(1025).fill(.001);
+    expect(restoreSettings({microphoneNoiseProfile:profile}).microphoneNoiseProfile).toEqual(profile);
+    expect(restoreSettings({microphoneNoiseProfile:[NaN]}).microphoneNoiseProfile).toEqual([]);
     expect(restoreSettings({microphoneNoiseFloor:.003}).microphoneNoiseFloor).toBe(.003);
     expect(restoreSettings({microphoneNoiseFloor:Infinity}).microphoneNoiseFloor).toBe(0);
     expect(restoreSettings({microphoneSensitivity:78}).microphoneSensitivity).toBe(78);

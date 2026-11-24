@@ -7,6 +7,8 @@ import { evaluatePianoWindow } from '../src/piano-model';
 import { decodePianoFrames, limitPianoTail } from '../src/audio-decoder';
 import { preparePianoWindow } from '../src/audio-signal';
 import { Evaluator } from '../src/evaluation';
+import { estimateNoiseProfile,suppressPianoNoise } from '../src/piano-noise';
+import { shortPiano,streetNoise,mixPianoNoise } from './fixtures/piano-audio';
 import { ANALYSIS_HOP_SAMPLES, MAX_ANALYSIS_SAMPLES, MIN_ANALYSIS_SAMPLES } from '../src/audio-timing';
 
 function piano(pitches: number[], rolled = false, onset = .15) {
@@ -64,6 +66,41 @@ describe('streaming piano recognition on the real WASM model', () => {
     for (const frame of limitPianoTail(decodePianoFrames(final.frames,final.onsets,start/22050),1,new Set())) evaluator.push(frame);
     expect(evaluator.index===1).toBe(accepted);
     if(!accepted) expect(evaluator.feedback().type).toBe('unconfirmed');
+  });
+  const noiseProfile=estimateNoiseProfile(streetNoise(44100,.003,247));
+  async function recognizeNoisy(input:Float32Array,expected:number[],profile=noiseProfile){
+    const evaluator=new Evaluator([{label:'test',notes:expected,left:[],right:expected,requireTogether:expected.length>1}]);
+    for(let end=MIN_ANALYSIS_SAMPLES;end<=input.length;end+=ANALYSIS_HOP_SAMPLES){
+      const start=Math.max(0,end-MAX_ANALYSIS_SAMPLES);
+      const cleaned=suppressPianoNoise(input.slice(start,end),profile);
+      const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+      for(const frame of decodePianoFrames(prediction.frames,prediction.onsets,start/22050))evaluator.push(frame);
+      if(evaluator.index===1)return true;
+    }
+    return false;
+  }
+  it.each([{notes:[60,64,67],hold:.08},{notes:[60,64,67],hold:.12},{notes:[66,70,73],hold:.08},{notes:[66,70,73],hold:.12},{notes:[69],hold:.08},{notes:[66],hold:.18}])('accepts a $hold s piano gesture $notes with background noise',async({notes,hold})=>{
+    const input=mixPianoNoise(shortPiano(notes,hold),streetNoise(22050));
+    expect(await recognizeNoisy(input,notes)).toBe(true);
+  });
+  it.each([[60,64,66],[60,64,67,70]])('does not turn a wrong chord %j into the target after filtering',async(...notes)=>{
+    const input=mixPianoNoise(shortPiano(notes,.12),streetNoise(22050));
+    expect(await recognizeNoisy(input,[60,64,67])).toBe(false);
+  });
+  it('does not turn a noisy arpeggio into a simultaneous chord',async()=>{
+    const notes=[60,64,67],input=mixPianoNoise(shortPiano(notes,.12,.004,true),streetNoise(22050));
+    expect(await recognizeNoisy(input,notes)).toBe(false);
+  });
+  it.each([4,25,63])('does not transcribe independently sampled background %i as notes',async seed=>{
+    const cleaned=suppressPianoNoise(streetNoise(16000,.003,seed),noiseProfile);
+    const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+    expect(decodePianoFrames(prediction.frames,prediction.onsets,0).every(frame=>!frame.notes.length)).toBe(true);
+  });
+  it('rejects a rising traffic-like noise floor without treating it as music',async()=>{
+    const noise=streetNoise(16000,.003,64).map((value,i)=>value*(1+2*i/16000));
+    const cleaned=suppressPianoNoise(noise,noiseProfile);
+    const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+    expect(decodePianoFrames(prediction.frames,prediction.onsets,0).every(frame=>!frame.notes.length)).toBe(true);
   });
   it('flushes the withheld tail on finalization and releases all intermediate tensors', async () => {
     const input = preparePianoWindow(piano([66]).slice(0, MIN_ANALYSIS_SAMPLES));
