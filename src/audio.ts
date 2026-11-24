@@ -1,14 +1,21 @@
 import type { Frame } from './evaluation';
 import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES, ANALYSIS_HOP_SAMPLES, PIANO_SAMPLE_RATE } from './audio-timing';
-import { microphoneAudible, microphoneGain, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
+import { microphoneAudible, microphoneGain, microphoneThreshold, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
+import { microphoneHealth, type MicrophoneHealth } from './microphone-health';
 import { decodePianoFrames, hasRecentPianoEvidence, limitPianoTail } from './audio-decoder';
 import { estimateNoiseProfile, restoreNoiseProfile } from './piano-noise';
+import type { PianoSourceEvidence } from './piano-source';
 export class MicrophoneError extends Error {
   constructor(readonly reason: 'permission' | 'unavailable' | 'model' | 'device' | 'slow') { super(reason); }
 }
 export type AudioActivity = 'listening' | 'heard' | 'processing' | 'uncertain' | 'background';
-export type MicrophoneMetrics = { rms: number; peak: number; inputRms: number; inputPeak: number; sampleRate: number; backend?: string; inferenceMs?: number };
+export type MicrophoneMetrics = { rms: number; peak: number; inputRms: number; inputPeak: number; sampleRate: number; backend?: string; inferenceMs?: number; health?: MicrophoneHealth; threshold?: number };
+export type PianoDiagnostic = { start: number; rawFrames: number[]; rawOnsets: number[]; frames: number[]; onsets: number[]; source?: PianoSourceEvidence };
 export class PianoListener {
+  // Opt-in local diagnostics; never transferred in a production build.
+  onDiagnostic?: (window: PianoDiagnostic) => void;
+  onDiagnosticSamples?: (samples: Float32Array) => void;
+  pianoGate = import.meta.env.DEV && typeof location !== 'undefined' && new URLSearchParams(location.search).get('pianoGate') === '1';
   private worker?: Worker;
   private initialized?: Promise<void>;
   private context?: AudioContext;
@@ -39,6 +46,9 @@ export class PianoListener {
   private activity: AudioActivity = 'listening';
   private backend?: string;
   private inferenceMs?: number;
+  private lastNotesAt = 0;
+  private analysisHealth?: 'good' | 'noise' | 'uncertain';
+  private analysisAt = -Infinity;
   private endingAt?: number;
   private endingNotes = new Set<number>();
   private drain?: { target: number; resolve: () => void; timer: ReturnType<typeof setTimeout> };
@@ -93,14 +103,22 @@ export class PianoListener {
         if (data.type === 'frames') {
           if (data.id === this.generation) {
             if (this.jobRevision === this.signalRevision && this.recognitionEnabled) {
+              if (import.meta.env.DEV && data.rawFrames) {
+                // Bound local JSON size without changing any recognition values.
+                const diagnostic = (values: Float32Array) => Array.from(values, value => Math.round(value * 100000) / 100000);
+                this.onDiagnostic?.({ start: data.start, rawFrames: diagnostic(data.rawFrames), rawOnsets: diagnostic(data.rawOnsets), frames: diagnostic(data.frames), onsets: diagnostic(data.onsets), source: data.source });
+              }
               const recognized = this.decode(data.frames, data.onsets, data.start);
+              if (recognized) this.lastNotesAt=this.total;
+              this.analysisHealth=recognized ? 'good' : data.noiseOnly || data.noiseReduced || data.source && !data.source.accepted && Math.max(data.source.speech,data.source.noise)>.3 ? 'noise' : 'uncertain';
+              this.analysisAt=this.total;
               if (data.id === this.generation) this.reportActivity(recognized ? 'processing' : 'listening');
             } else this.reportActivity('listening');
           }
           this.resolveJob?.();
         }
       };
-      this.worker.postMessage({ type: 'init', base: new URL(import.meta.env.BASE_URL, location.href).href });
+      this.worker.postMessage({ type: 'init', base: new URL(import.meta.env.BASE_URL, location.href).href, pianoGate: import.meta.env.DEV && this.pianoGate, diagnostics: import.meta.env.DEV && !!this.onDiagnostic });
     }).catch(error => { this.initialized = undefined; this.worker?.terminate(); this.worker = undefined; throw error; });
     return this.initialized;
   }
@@ -125,6 +143,7 @@ export class PianoListener {
       this.samples = new Float32Array(0); this.total = 0; this.lastSubmitted = 0; this.lastSound = -Infinity;
       this.running = true; this.jobError = undefined;
       this.activity = 'listening'; this.inferenceMs = undefined;
+      this.lastNotesAt=0;this.analysisHealth=undefined;this.analysisAt=-Infinity;
       this.endingAt = undefined; this.endingNotes.clear();
       let modelReady = false;
       this.source = context.createMediaStreamSource(stream);
@@ -135,6 +154,7 @@ export class PianoListener {
       this.node.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
         if (!this.running || generation !== this.generation) return;
         const raw = resampler.push(data);
+        if (import.meta.env.DEV && modelReady) this.onDiagnosticSamples?.(raw);
         if (this.noiseCapture && this.noiseCapture.length < PIANO_SAMPLE_RATE * 2) {
           const chunk = raw.slice(0, PIANO_SAMPLE_RATE * 2 - this.noiseCapture.length);
           this.noiseCapture.chunks.push(chunk); this.noiseCapture.length += chunk.length;
@@ -144,7 +164,8 @@ export class PianoListener {
         const samples = raw.map(sample => sample * gain);
         const { rms, peak } = signalLevel(samples);
         this.onLevel(Math.min(1, Math.sqrt(rms * 12)));
-        onMetrics({ rms, peak, inputRms, inputPeak, sampleRate: context.sampleRate, backend: this.backend, inferenceMs: this.inferenceMs });
+        const threshold=microphoneThreshold(this.sensitivity,this.noiseFloor,this.noiseProfile.length>0);
+        onMetrics({ rms, peak, inputRms, inputPeak, sampleRate: context.sampleRate, backend: this.backend, inferenceMs: this.inferenceMs, threshold, health: microphoneHealth({seconds:this.total/PIANO_SAMPLE_RATE,sinceNotes:(this.total-this.lastNotesAt)/PIANO_SAMPLE_RATE,sinceAudible:(this.total-this.lastSound)/PIANO_SAMPLE_RATE,inputPeak,analysis:this.total-this.analysisAt<PIANO_SAMPLE_RATE*1.5?this.analysisHealth:undefined}) });
         if (microphoneAudible(rms, this.sensitivity, this.noiseFloor, this.noiseProfile.length > 0)) {
           this.lastSound = this.total;
         }
@@ -190,7 +211,7 @@ export class PianoListener {
       this.jobError = new MicrophoneError('slow');
       this.dispose(); this.onError(this.jobError);
     }, 30000);
-    this.worker.postMessage({ type: 'analyze', id: this.generation, samples: input, start, final, noiseProfile: this.noiseProfile, inputGain: microphoneGain(this.sensitivity) }, [input.buffer]);
+    this.worker.postMessage({ type: 'analyze', id: this.generation, revision:this.jobRevision, samples: input, start, final, noiseProfile: this.noiseProfile, inputGain: microphoneGain(this.sensitivity), diagnostics: import.meta.env.DEV && !!this.onDiagnostic, pianoGate: import.meta.env.DEV && this.pianoGate }, [input.buffer]);
     await job;
     clearTimeout(timeout); this.inferenceMs = performance.now() - started;
     if (this.busy === job) this.busy = undefined;

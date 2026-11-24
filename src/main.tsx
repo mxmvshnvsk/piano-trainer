@@ -7,4 +7,7 @@ import '@fontsource/cormorant-garamond/400-italic.css';
 import { App } from './App';
 import './style.css';
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+const root = createRoot(document.getElementById('root')!);
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('calibrate')) {
+  void import('./Calibration').then(({ Calibration }) => root.render(<React.StrictMode><Calibration /></React.StrictMode>));
+} else root.render(<React.StrictMode><App /></React.StrictMode>);

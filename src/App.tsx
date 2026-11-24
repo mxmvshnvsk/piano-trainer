@@ -16,6 +16,7 @@ import { FlowGate, flowSettings } from './flow';
 import { ChordSymbol } from './MusicNotation';
 import { RhythmTrainer } from './RhythmTrainer';
 import { MicrophoneSettings, microphoneErrorText } from './MicrophoneSettings';
+import { microphoneHealthText, type MicrophoneHealth } from './microphone-health';
 
 type Phase = 'ready' | 'loading' | 'listening' | 'analyzing' | 'paused' | 'success' | 'feedback' | 'error';
 type Preferences = { theme?: 'light' | 'dark'; language?: Language };
@@ -56,6 +57,7 @@ export function App() {
   const [input, setInput] = useState<'microphone' | 'demo'>('microphone');
   const [heard, setHeard] = useState<number[]>([]);
   const [level, setLevel] = useState(0);
+  const [microphoneQuality,setMicrophoneQuality]=useState<MicrophoneHealth>('good');
   const [remaining, setRemaining] = useState(settings.seconds);
   const remainingRef = useRef(settings.seconds);
   const [countdown, setCountdown] = useState(settings.gap);
@@ -87,6 +89,9 @@ export function App() {
   const acceptRef = useRef<(frames: Frame[]) => void>(() => {});
   const flowGate = useRef(new FlowGate());
   const lastFrame = useRef(-Infinity);
+  const [flowSwitching, setFlowSwitching] = useState(false);
+  const flowSwitchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [waitingForRelease, setWaitingForRelease] = useState(false);
 
   useEffect(() => { write('settings', settings); }, [settings]);
   useEffect(() => { write('difficult', difficult); }, [difficult]);
@@ -121,13 +126,14 @@ export function App() {
     }
     return () => { disposed = true; stopUpdates?.(); window.removeEventListener('online', offline); window.removeEventListener('offline', offline); window.removeEventListener('beforeinstallprompt', offerInstall); };
   }, []);
-  useEffect(() => () => { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); resolveDemo.current?.(); listener.current?.dispose(); }, []);
+  useEffect(() => () => { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); clearTimeout(flowSwitchTimer.current); resolveDemo.current?.(); listener.current?.dispose(); }, []);
 
-  function cancel() { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); resolveDemo.current?.(); resolveDemo.current = undefined; demoJob.current = undefined; listener.current?.stop(); setLevel(0); setActivity('listening'); }
+  function cancel() { attemptToken.current++; clearInterval(timer.current); clearTimeout(demoProcessing.current); clearTimeout(flowSwitchTimer.current); flowSwitchTimer.current=undefined; setFlowSwitching(false); setWaitingForRelease(false); resolveDemo.current?.(); resolveDemo.current = undefined; demoJob.current = undefined; listener.current?.stop(); setLevel(0); setActivity('listening'); }
   function reset(next: Exercise, keepCapture = false) {
     if (keepCapture) flowGate.current.arm(lastFrame.current, evaluator.current.steps.at(-1)!.notes);
     else { cancel(); flowGate.current.clear(); lastFrame.current = -Infinity; }
     setExercise(next); evaluator.current = new Evaluator(exerciseSteps(next), keepCapture ? lastFrame.current : -Infinity);
+    setWaitingForRelease(keepCapture);setActivity('listening');
     setStepIndex(0); setHeard([]); setFeedback(null); setLiveFeedback(null); cueSignature.current=''; setError(''); setRemaining(next.settings.seconds);
     remainingRef.current = next.settings.seconds; demoSelected.current = []; if (!keepCapture) demoTime.current = 0; changePhase(keepCapture ? 'listening' : 'ready');
   }
@@ -147,7 +153,13 @@ export function App() {
     else reset(item);
     navigate('practice');
   }
-  function next(continueSession = false) {
+  function next(continueSession = false, afterFade = false) {
+    if (flowSwitchTimer.current) return;
+    if (flow && !afterFade && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setFlowSwitching(true);
+      flowSwitchTimer.current=setTimeout(()=>{flowSwitchTimer.current=undefined;next(continueSession,true);setFlowSwitching(false);},180);
+      return;
+    }
     const pool = flow ? difficult.filter(e => e.settings.kind === 'chord' && playingMode(e) === 'together') : difficult;
     const nextTask = settings.difficultOnly && pool.length ? pool[(pool.findIndex(e => e.id === exercise.id) + 1) % pool.length] : createExercise(activeSettings, exercise);
     const keepCapture = flow && ['listening','success'].includes(phaseRef.current);
@@ -162,15 +174,16 @@ export function App() {
   }
   function acceptFrames(frames: Frame[]) {
     lastFrame.current = Math.max(lastFrame.current, ...frames.map(f => f.at));
-    if (!['listening', 'analyzing'].includes(phaseRef.current)) return;
+    if (flowSwitchTimer.current || !['listening', 'analyzing'].includes(phaseRef.current)) return;
     let latest: number[] = [];
     let candidate: LiveFeedback | null = null;
     for (const frame of frames) {
       if (flow && !flowGate.current.accept(frame)) continue;
-      latest = frame.confidence >= .5 ? frame.notes : [];
+      latest = frame.confidence >= .5 ? evaluator.current.relevantNotes(frame) : [];
       const before = evaluator.current.index;
       const target = evaluator.current.steps[before]?.notes || [];
       const result = evaluator.current.push(frame);
+      if(result.index!==before)latest=[];
       setStepIndex(result.index);
       if (result.complete) { complete(); return; }
       const problem = evaluator.current.liveFeedback();
@@ -178,6 +191,7 @@ export function App() {
       if (problem) candidate=problem;
     }
     const problem = candidate || evaluator.current.liveFeedback();
+    if(flow)setWaitingForRelease(flowGate.current.waiting);
     setHeard(!latest.length && problem ? [...problem.expected.filter(n=>!problem.feedback.missing.includes(n)),...problem.feedback.extra] : latest);
     const signature = JSON.stringify(problem);
     if (signature !== cueSignature.current) { cueSignature.current=signature; setLiveFeedback(problem); if(problem)setCueRevision(r=>r+1); }
@@ -210,7 +224,8 @@ export function App() {
         listener.current ??= new PianoListener();
         listener.current.setSensitivity(settings.microphoneSensitivity); listener.current.setNoiseFloor(settings.microphoneNoiseFloor); listener.current.setNoiseProfile(settings.microphoneNoiseProfile);
         const previousTime = resume ? (settings.seconds - remainingRef.current) : 0;
-        const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(offsetPianoFrames(frames, previousTime)); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(value); });
+        setMicrophoneQuality('good');
+        const started = await listener.current.start(frames => { if (token === attemptToken.current) acceptRef.current(offsetPianoFrames(frames, previousTime)); }, setLevel, audioError, value => { if(token === attemptToken.current)setActivity(flow && flowGate.current.waiting ? 'listening' : value); }, metrics=>{if(token===attemptToken.current)setMicrophoneQuality(metrics.health||'good');});
         if (!started || token !== attemptToken.current) return;
       } catch (reason) { if (token === attemptToken.current) audioError(reason as Error); return; }
     }
@@ -237,7 +252,7 @@ export function App() {
   }
   useEffect(() => {
     if (phase === 'success' && flow && !panel) {
-      const timeout = setTimeout(() => nextRef.current(), 350);
+      const timeout = setTimeout(() => nextRef.current(), 750);
       return () => clearTimeout(timeout);
     }
     if (phase !== 'success' || !settings.auto || panel) return;
@@ -286,7 +301,7 @@ export function App() {
   const visibleNotes = [...new Set(steps.flatMap(step => step.notes))];
   const noteNames:Record<number,string>=Object.assign({},...steps.map(step=>step.spelling||{}));
   const pitchLabel=(note:number)=>noteNames[note]||noteName(note);
-  const shownFeedback = phase === 'feedback' ? feedback : phase === 'listening' && activity !== 'processing' ? liveFeedback?.feedback : null;
+  const shownFeedback = phase === 'feedback' ? feedback : phase === 'listening' ? liveFeedback?.feedback : null;
   const feedbackStep = phase === 'feedback' ? Math.min(evaluator.current.index,steps.length-1) : liveFeedback?.step ?? stepIndex;
   const feedbackTarget = liveFeedback && phase !== 'feedback' ? liveFeedback.expected : steps[Math.min(feedbackStep,steps.length-1)].notes;
   const ordinal = exercise.settings.kind === 'progression' ? steps.slice(0,feedbackStep).filter(s=>s.label===steps[feedbackStep]?.label).length : feedbackStep;
@@ -301,7 +316,8 @@ export function App() {
     : phase === 'paused' ? t('Продолжить', 'Resume') : phase === 'ready' ? t('Начать', 'Start') : t('Повторить', 'Try again');
   const patch = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings(s => ({ ...s, [key]: value }));
 
-  const displayIdentity = `${exercise.id}:${number}:${Math.min(stepIndex, steps.length - 1)}`;
+  const displayIdentity = `${exercise.id}:${number}:${currentStep.label}`;
+  const displayStep=sequentialChord ? {...currentStep,...Object.fromEntries((['left','right'] as const).map(side=>[side,steps.filter(step=>step.label===currentStep.label&&step.root===currentStep.root).flatMap(step=>step[side]).sort((a,b)=>a-b)]))} : currentStep;
   return <div className={`shell ${panel ? 'panel-open' : ''} ${flow && !panel ? 'flow-mode' : ''}`} data-result={cueType}>
     <header>
       <a className="brand" href={routeHash('practice')} aria-label={t('На главную · основной тренажёр','Home · main trainer')} title={t('Вернуться в тренажёр','Return to practice')}><Piano aria-hidden="true" />piano practice</a>
@@ -347,10 +363,10 @@ export function App() {
       {!!difficult.length && <button className="primary apply" onClick={() => { patch('difficultOnly', true); practiseSaved(difficult[0]); }}>{t('Тренировать трудное','Practise difficult')}</button>}
     </section> : rhythm ? (!updating && <RhythmTrainer language={language}/>) : <>
       <div className="session"><span>{flow && t('Поток · ','Flow · ')}{t(({chord:'Аккорды',scale:'Гаммы',arpeggio:'Арпеджио',progression:'Три аккорда'})[exercise.settings.kind], exercise.settings.kind === 'progression' ? 'Three chords' : undefined)}{input === 'demo' && ' · '+t('Демо','Demo')}</span><div className="session-actions">{!flow && <button className="keyboard-toggle" aria-label={t('Показывать клавиатуру','Show keyboard')} aria-pressed={settings.keyboard} onClick={()=>patch('keyboard',!settings.keyboard)}><KeyboardIcon /><span>{t('Клавиатура','Keyboard')}</span></button>}<span>{t('Упражнение','Exercise')} {number}</span></div></div>
-      <div className="practice-content">
+      <div className={`practice-content ${flowSwitching ? 'flow-switching' : ''}`}>
       <main className="stage">
         <div className="eyebrow">{chordExercise ? sequentialChord ? t('Сыграй звуки аккорда по очереди', 'Play the chord one note at a time') : t('Сыграй ноты аккорда одновременно', 'Play the chord notes together') : t(exercise.settings.kind === 'scale' ? 'Сыграй гамму вверх' : 'Сыграй арпеджио вверх')}</div>
-        <Crossfade identity={displayIdentity} className="task-face-transition">
+        <Crossfade identity={flow ? 'flow-face' : displayIdentity} className="task-face-transition">
         <div className={`task-face ${phase === 'paused' ? 'still' : ''} result-${cueType}`}>
           <div role="img" aria-label={t('Левая рука','Left hand')} className={`palm left ${exercise.settings.hand === 'right' ? 'inactive' : ''}`} />
           <h1 aria-label={currentStep.label} className={`chord ${currentStep.label.length > 4 ? 'long' : ''}`}><ChordSymbol label={currentStep.label} decorative/></h1>
@@ -358,16 +374,18 @@ export function App() {
         </div>
         </Crossfade>
         <div key={`chord-name:${displayIdentity}`} className="chord-name">{exercise.settings.kind==='scale'?`${tonicName(exercise.root,language)} · ${scaleName(exerciseScale(exercise),language)}`:chordName(currentStep.root ?? exercise.root, currentStep.chord ?? exercise.chord, language)}</div>
-        <div key={`octave-cue:${displayIdentity}`} className="octave-cue">{(['left','right'] as const).map(side => currentStep[side].length > 0 && <span key={side}>{exercise.settings.hand === 'both' && (side === 'left' ? t('Л: ','L: ') : t('П: ','R: '))}{octaveName(currentStep[side][0],language,pitchLabel(currentStep[side][0]))} · {pitchLabel(currentStep[side][0])}</span>)}</div>
+        <div key={`octave-cue:${displayIdentity}`} className="octave-cue">{(['left','right'] as const).map(side => displayStep[side].length > 0 && <span key={side}>{exercise.settings.hand === 'both' && (side === 'left' ? t('Л: ','L: ') : t('П: ','R: '))}{octaveName(displayStep[side][0],language,pitchLabel(displayStep[side][0]))} · {pitchLabel(displayStep[side][0])}</span>)}</div>
         <div key={`voicing:${displayIdentity}`} className="voicing">{exercise.settings.kind==='scale'?t('Восходящая гамма · одна октава','Ascending scale · one octave'):exercise.settings.kind==='arpeggio'?t('Восходящее арпеджио','Ascending arpeggio'):voicingName(exercise.settings.voicing,language,true)}{chordExercise && ` · ${playingLabel(exercise)}`}</div>
-        {steps.length > 1 && <div className="step-dots" aria-label={`${Math.min(stepIndex+1,steps.length)} / ${steps.length}`}>{steps.map((step,i) => <span className={i < stepIndex ? 'done' : i === stepIndex ? 'current' : ''} key={i}>{exercise.settings.kind === 'progression' && !sequentialChord ? step.label : i+1}</span>)}</div>}
-        <div className="result-slot" aria-live="polite" aria-atomic="true">{status && <div key={`${cueType}-${cueRevision}`} className={`result-card ${cueType}`}>
-          <span className="result-symbol">{cueType==='success'?<CircleCheck />:cueType==='incorrect'?<CircleAlert />:cueType==='processing'?<LoaderCircle />:cueType==='heard'?<AudioLines />:phase==='paused'?<Pause />:<Mic />}</span>
-          <div><p>{status}</p>{message && <small>{message.detail}</small>}{phase === 'success' && settings.auto && !flow && <small>{t('Следующее упражнение через','Next exercise in')} {Math.ceil(countdown)} {t('с','s')}</small>}{phase==='listening' && !message && activity==='uncertain' ? <small>{t('Подстрой микрофон в настройках и повтори','Adjust the microphone in settings and retry')}</small> : phase==='listening' && !message && !flow && <small>{Math.ceil(remaining)} {t('с осталось','s remaining')}</small>}</div>
-        </div>}</div>
-        <div className="listening-meter-slot">{(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}</div>
+        {steps.length > 1 && <div className="step-dots" aria-label={`${Math.min(stepIndex+1,steps.length)} / ${steps.length}`}>{steps.map((step,i) => <span className={i < stepIndex ? 'done' : i === stepIndex ? 'current' : ''} key={i}>{sequentialChord ? `${i+1} · ${pitchLabel(step.notes[0])}` : exercise.settings.kind === 'progression' ? step.label : i+1}</span>)}</div>}
       </main>
       {(flow || settings.keyboard && (settings.hints || settings.heard)) && <Keyboard names={noteNames} expected={flow || settings.hints ? currentStep.notes : []} target={currentStep.notes} heard={flow || settings.heard ? heard : []} position={currentStep.notes.length===1 ? stepIndex : 0} range={visibleNotes} language={language} interactive={input === 'demo' && phase === 'listening' && activity!=='processing'} onNote={playDemo} />}
+      <section className="feedback-band">
+        <div className="result-slot" aria-live="polite" aria-atomic="true">{status && <div className={`result-card ${cueType}`}>
+          <span className="result-symbol">{cueType==='success'?<CircleCheck />:cueType==='incorrect'?<CircleAlert />:cueType==='processing'?<LoaderCircle />:cueType==='heard'?<AudioLines />:phase==='paused'?<Pause />:<Mic />}</span>
+          <div><p>{phase==='listening' && flow && waitingForRelease ? t('Новый аккорд · отпусти предыдущий', 'New chord · release the previous one') : status}</p>{message && <small>{message.detail}</small>}{phase === 'success' && flow && <small>{t('Дальше — следующий аккорд','The next chord follows')}</small>}{phase === 'success' && settings.auto && !flow && <small>{t('Следующее упражнение через','Next exercise in')} {Math.ceil(countdown)} {t('с','s')}</small>}{phase==='listening' && !message && input==='microphone' && microphoneQuality!=='good' ? <small>{microphoneHealthText(microphoneQuality,language)} <button className="microphone-help-link" onClick={()=>navigate(mode,'settings')}>{t('Настроить микрофон','Adjust microphone')}</button></small> : phase==='listening' && !message && activity==='uncertain' ? <small>{t('Подстрой микрофон в настройках и повтори','Adjust the microphone in settings and retry')}</small> : phase==='listening' && !message && !flow && <small>{Math.ceil(remaining)} {t('с осталось','s remaining')}</small>}</div>
+        </div>}</div>
+        <div className="listening-meter-slot">{(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}</div>
+      </section>
       <div className="transport"><button onClick={toggleDifficult} aria-pressed={saved} aria-label={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} title={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} className="save-button">{saved ? <Check /> : <BookmarkPlus />}<span>{saved ? t('В сложном','Added') : t('В сложное','To difficult')}</span></button><button className="primary" onClick={primary}>{['listening','loading','analyzing','paused'].includes(phase) || phase === 'success' && (flow || settings.auto) ? phase === 'paused' ? <Play /> : <Pause /> : <Play />}<span>{primaryLabel}</span></button><button className="next-button" onClick={() => next()}>{t('Дальше','Next')}<ChevronRight /></button></div>
       </div>
     </>}

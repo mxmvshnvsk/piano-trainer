@@ -27,8 +27,23 @@ describe('continuous chord flow', () => {
   });
   it('allows repeating after release and resets capture timestamps after pause', () => {
     const gate = new FlowGate(); gate.arm(20,[60,64,67]);
-    expect(gate.accept({at:20.1,notes:[],confidence:0})).toBe(true);
+    expect(gate.accept({at:20.1,notes:[],confidence:0})).toBe(false);
+    expect(gate.accept({at:20.19,notes:[],confidence:0})).toBe(false);
     expect(gate.accept({at:20.2,notes:[60,64,67],confidence:1})).toBe(true);
     gate.clear(); expect(gate.accept({at:0,notes:[60,64,67],confidence:1})).toBe(true);
+  });
+  it('does not mistake decay, a weak extra harmonic, or an old recovered onset for a new chord', () => {
+    const gate=new FlowGate();gate.arm(2,[60,64,67]);
+    expect(gate.accept({at:2.1,notes:[60,64],confidence:.8,onsets:[]})).toBe(false);
+    expect(gate.accept({at:2.2,notes:[60,64,72],confidence:.8,strengths:{60:.9,64:.9,72:.4},onsets:[72],onsetTimes:{72:2.2}})).toBe(false);
+    expect(gate.accept({at:2.3,notes:[60,64,69],confidence:.8,onsets:[69],onsetTimes:{69:1.9}})).toBe(false);
+    expect(gate.waiting).toBe(true);
+    expect(gate.accept({at:2.4,notes:[60,64,69],confidence:.8,onsets:[69],onsetTimes:{69:2.4}})).toBe(true);
+    expect(gate.waiting).toBe(false);
+  });
+  it('opens for a new soft attack once its recovered pitch becomes confident',()=>{
+    const gate=new FlowGate();gate.arm(2,[60,64,67]);
+    expect(gate.accept({at:2.1,notes:[60,64,69],confidence:.8,strengths:{69:.4},onsets:[69],onsetTimes:{69:2.1}})).toBe(false);
+    expect(gate.accept({at:2.2,notes:[60,64,69],confidence:.8,strengths:{69:.7},onsets:[],onsetTimes:{69:2.1}})).toBe(true);
   });
 });

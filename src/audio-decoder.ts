@@ -53,11 +53,11 @@ export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, st
     }
   }
   for (let i = 0; i < count; i++) {
-    const notes: number[] = [], attacks: number[] = [], onsetTimes: Record<number, number> = {}; let strength = 0;
+    const notes: number[] = [], attacks: number[] = [], onsetTimes: Record<number, number> = {}, strengths: Record<number,number>={}; let strength = 0;
     for (let n = 0; n < 88; n++) {
       const probability = frames[i * 88 + n], previous = i ? frames[(i - 1) * 88 + n] : 0;
       const soft = peaks[n] < .35 && sustained[n] === 1;
-      if (probability >= (soft ? .5 : .32) && (peaks[n] >= .3 || soft)) { notes.push(n + 21); strength += probability; }
+      if (probability >= (soft ? .5 : .32) && (peaks[n] >= .3 || soft)) { notes.push(n + 21); strength += probability; strengths[n+21]=probability; }
       const modelAttack = onsets[i * 88 + n] >= .35 && (i > 0 ? onsets[(i - 1) * 88 + n] < .35 : start === 0);
       // Pitch and onset heads can peak at different times for the same attack.
       // Use the supported pitch's leading edge too, rather than making a block
@@ -73,7 +73,7 @@ export function decodePianoFrames(frames: Float32Array, onsets: Float32Array, st
         if (at !== undefined) onsetTimes[n + 21] = at;
       }
     }
-    output.push({ at: start + i * 256 / 22050, notes, onsets: attacks, onsetTimes, confidence: notes.length ? strength / notes.length : 0 });
+    output.push({ at: start + i * 256 / 22050, notes, strengths, onsets: attacks, onsetTimes, confidence: notes.length ? strength / notes.length : 0 });
   }
   return output;
 }
