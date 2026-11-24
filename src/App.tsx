@@ -88,6 +88,9 @@ export function App() {
 
   useEffect(() => { write('settings', settings); }, [settings]);
   useEffect(() => { write('difficult', difficult); }, [difficult]);
+  useEffect(() => {
+    if (!difficult.length) setSettings(s => s.difficultOnly ? { ...s, difficultOnly: false } : s);
+  }, [difficult.length]);
   useEffect(() => { write('preferences', preferences); }, [preferences]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -274,7 +277,9 @@ export function App() {
     }
   }
   const saved = difficult.some(e => e.id === exercise.id);
-  const save = () => { if (!saved) setDifficult(list => [...list, exercise]); };
+  const toggleDifficult = () => setDifficult(list => list.some(item => item.id === exercise.id)
+    ? list.filter(item => item.id !== exercise.id)
+    : [...list, exercise]);
 
   const visibleNotes = [...new Set(steps.flatMap(step => step.notes))];
   const noteNames:Record<number,string>=Object.assign({},...steps.map(step=>step.spelling||{}));
@@ -335,7 +340,7 @@ export function App() {
     </section> : panel === 'difficult' ? <section className="panel">
       <div className="panel-heading"><h2>{t('Трудные упражнения','Difficult exercises')}</h2><button className="icon-button" onClick={() => navigate(mode)} aria-label={t('Закрыть','Close')}><X /></button></div>
       {!difficult.length && <p className="empty">{t('Здесь появятся упражнения, которые ты отложишь.','Exercises you save will appear here.')}</p>}
-      {difficult.map(item => <div className="saved-row" key={item.id}><button className="saved-exercise" onClick={() => { practiseSaved(item); }}><span><ChordSymbol label={exerciseSteps(item)[0].label}/></span>{item.settings.kind==='scale'&&<small>{scaleName(exerciseScale(item),language)}</small>}<small>{t(({left:'Левая рука',right:'Правая рука',both:'Обе руки'})[item.settings.hand])} · {octaveName(item.root,language)}{(item.settings.kind === 'chord' || item.settings.kind === 'progression') && ` · ${playingLabel(item)}`}</small></button><button className="icon-button" aria-label={t('Удалить','Remove')} onClick={() => { setDifficult(list => list.filter(e => e.id !== item.id)); if (difficult.length === 1) patch('difficultOnly', false); }}><Trash2 /></button></div>)}
+      {difficult.map(item => <div className="saved-row" key={item.id}><button className="saved-exercise" onClick={() => { practiseSaved(item); }}><span><ChordSymbol label={exerciseSteps(item)[0].label}/></span>{item.settings.kind==='scale'&&<small>{scaleName(exerciseScale(item),language)}</small>}<small>{t(({left:'Левая рука',right:'Правая рука',both:'Обе руки'})[item.settings.hand])} · {octaveName(item.root,language)}{(item.settings.kind === 'chord' || item.settings.kind === 'progression') && ` · ${playingLabel(item)}`}</small></button><button className="icon-button" aria-label={t('Удалить','Remove')} onClick={() => setDifficult(list => list.filter(e => e.id !== item.id))}><Trash2 /></button></div>)}
       {!!difficult.length && <button className="primary apply" onClick={() => { patch('difficultOnly', true); practiseSaved(difficult[0]); }}>{t('Тренировать трудное','Practise difficult')}</button>}
     </section> : rhythm ? (!updating && <RhythmTrainer language={language}/>) : <>
       <div className="session"><span>{flow && t('Поток · ','Flow · ')}{t(({chord:'Аккорды',scale:'Гаммы',arpeggio:'Арпеджио',progression:'Три аккорда'})[exercise.settings.kind], exercise.settings.kind === 'progression' ? 'Three chords' : undefined)}{input === 'demo' && ' · '+t('Демо','Demo')}</span><div className="session-actions">{!flow && <button className="keyboard-toggle" aria-label={t('Показывать клавиатуру','Show keyboard')} aria-pressed={settings.keyboard} onClick={()=>patch('keyboard',!settings.keyboard)}><KeyboardIcon /><span>{t('Клавиатура','Keyboard')}</span></button>}<span>{t('Упражнение','Exercise')} {number}</span></div></div>
@@ -358,7 +363,7 @@ export function App() {
         {(phase === 'listening' || phase === 'loading') && input === 'microphone' && <div className="listening-meter" aria-label={t('Уровень микрофона','Microphone level')}><span style={{ width: `${level*100}%` }} /></div>}
       </main>
       {(flow || settings.keyboard && (settings.hints || settings.heard)) && <Keyboard names={noteNames} expected={flow || settings.hints ? currentStep.notes : []} target={currentStep.notes} heard={flow || settings.heard ? heard : []} position={currentStep.notes.length===1 ? stepIndex : 0} range={visibleNotes} language={language} interactive={input === 'demo' && phase === 'listening' && activity!=='processing'} onNote={playDemo} />}
-      <div className="transport"><button onClick={save} disabled={saved} className="save-button">{saved ? <Check /> : <BookmarkPlus />}<span>{saved ? t('В сложном','Added') : t('В сложное','To difficult')}</span></button><button className="primary" onClick={primary}>{['listening','loading','analyzing','paused'].includes(phase) || phase === 'success' && (flow || settings.auto) ? phase === 'paused' ? <Play /> : <Pause /> : <Play />}<span>{primaryLabel}</span></button><button className="next-button" onClick={() => next()}>{t('Дальше','Next')}<ChevronRight /></button></div>
+      <div className="transport"><button onClick={toggleDifficult} aria-pressed={saved} aria-label={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} title={saved ? t('Убрать из сложного','Remove from difficult') : t('В сложное','To difficult')} className="save-button">{saved ? <Check /> : <BookmarkPlus />}<span>{saved ? t('В сложном','Added') : t('В сложное','To difficult')}</span></button><button className="primary" onClick={primary}>{['listening','loading','analyzing','paused'].includes(phase) || phase === 'success' && (flow || settings.auto) ? phase === 'paused' ? <Play /> : <Pause /> : <Play />}<span>{primaryLabel}</span></button><button className="next-button" onClick={() => next()}>{t('Дальше','Next')}<ChevronRight /></button></div>
       </div>
     </>}
     <footer><a className="author-credit" href="https://github.com/mxmvshnvsk" target="_blank" rel="noopener noreferrer">{t('Сделано mxmvshnvsk','Made by mxmvshnvsk')}</a><span><Mic />{t('Фортепиано · без педали','Piano · no pedal')}</span><span className="footer-end"><span className="footer-status">{offlineReady ? <><WifiOff />{t('Доступно без сети','Available offline')}</> : offlineError ? t('Офлайн-режим недоступен','Offline mode unavailable') : !online ? t('Без сети','Offline') : import.meta.env.DEV ? '' : t('Подготовка к работе без сети…','Preparing offline access…')}</span><a className="star-link" href="https://github.com/mxmvshnvsk/piano-trainer" target="_blank" rel="noopener noreferrer" aria-label={t('Поставить звезду на GitHub','Star this project on GitHub')} title={t('Поставить звезду на GitHub','Star this project on GitHub')}><Star aria-hidden="true"/></a>{install && <button className="install-button" aria-label={t('Установить','Install')} title={t('Установить','Install')} onClick={async () => { await install.prompt(); await install.userChoice; setInstall(undefined); }}><Download /><span>{t('Установить','Install')}</span></button>}</span></footer>
