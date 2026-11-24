@@ -1,4 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
+import { validatePianoPitches } from './piano-spectrum';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import { evaluatePianoWindow } from './piano-model';
 import { MIN_ANALYSIS_SAMPLES, MODEL_CONTEXT_FRAMES, MODEL_HOP_SAMPLES } from './audio-timing';
@@ -36,8 +37,10 @@ self.onmessage = async (event: MessageEvent) => {
     const count = Math.max(0, Math.floor(samples.length / MODEL_HOP_SAMPLES) - (final ? 0 : MODEL_CONTEXT_FRAMES));
     // Keep capture timestamps/release evidence, but do not run the network on
     // a window that normalization would mute anyway.
+    const prepared = quiet ? cleaned : preparePianoWindow(cleaned);
     const { frames, onsets } = quiet ? { frames: new Float32Array(count * 88), onsets: new Float32Array(count * 88) }
-      : await evaluatePianoWindow(model, preparePianoWindow(cleaned), final);
+      : await evaluatePianoWindow(model, prepared, final);
+    if (!quiet) validatePianoPitches(prepared, frames, onsets);
     self.postMessage({ type: 'frames', id, start, frames, onsets, noiseOnly: quiet && noiseProfile.length > 0 }, { transfer: [frames.buffer, onsets.buffer] });
   } catch (error) {
     self.postMessage({ type: 'error', id, message: error instanceof Error ? error.message : String(error) });

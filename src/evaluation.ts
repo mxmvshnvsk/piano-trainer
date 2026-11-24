@@ -60,7 +60,10 @@ export class Evaluator {
     if (!match || frame.confidence < .5 || frame.at - this.lastAdvance < .12) this.stableSince = null;
     else {
       this.stableSince ??= frame.at;
-      if (frame.at - this.stableSince >= .1) {
+      // Short piano chords can decay below confidence just before 100 ms.
+      // Keep the same pitch/attack rules, but accept 80 ms of exact chord evidence.
+      const duration = this.steps[this.index].requireTogether ? .08 : .1;
+      if (frame.at - this.stableSince >= duration) {
         this.index++;
         this.lastAdvance = frame.at;
         this.stableSince = null;

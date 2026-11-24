@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import { evaluatePianoWindow } from '../src/piano-model';
+import { validatePianoPitches } from '../src/piano-spectrum';
 import { decodePianoFrames, limitPianoTail } from '../src/audio-decoder';
 import { preparePianoWindow } from '../src/audio-signal';
 import { Evaluator } from '../src/evaluation';
@@ -33,13 +34,17 @@ describe('streaming piano recognition on the real WASM model', () => {
     await evaluatePianoWindow(model, new Float32Array(MIN_ANALYSIS_SAMPLES));
   });
   afterAll(() => model?.dispose());
+  async function recognize(samples:Float32Array,final=false){
+    const result=await evaluatePianoWindow(model,samples,final);
+    return validatePianoPitches(samples,result.frames,result.onsets);
+  }
   it.each([[60, 64, 67], [66, 70, 73]])('accepts quiet chord %j through consecutive short windows', async (...pitches) => {
     const input = piano(pitches);
     const evaluator = new Evaluator([{ label: 'test', notes: pitches, left: [], right: pitches, requireTogether: true }]);
     let completedAt = Infinity;
     for (let end = MIN_ANALYSIS_SAMPLES; end <= 22050; end += ANALYSIS_HOP_SAMPLES) {
       const start = Math.max(0, end - MAX_ANALYSIS_SAMPLES);
-      const prediction = await evaluatePianoWindow(model, preparePianoWindow(input.slice(start, end)));
+      const prediction = await recognize(preparePianoWindow(input.slice(start, end)));
       for (const frame of decodePianoFrames(prediction.frames, prediction.onsets, start / 22050)) evaluator.push(frame);
       if (evaluator.index === 1) { completedAt = end / 22050; break; }
     }
@@ -50,19 +55,19 @@ describe('streaming piano recognition on the real WASM model', () => {
     const evaluator = new Evaluator([{ label: 'C', notes: pitches, left: [], right: pitches, requireTogether: true }]);
     for (let end = MIN_ANALYSIS_SAMPLES; end <= 38000; end += ANALYSIS_HOP_SAMPLES) {
       const start = Math.max(0, end - MAX_ANALYSIS_SAMPLES);
-      const prediction = await evaluatePianoWindow(model, preparePianoWindow(input.slice(start, end)));
+      const prediction = await recognize(preparePianoWindow(input.slice(start, end)));
       for (const frame of decodePianoFrames(prediction.frames, prediction.onsets, start / 22050)) evaluator.push(frame);
     }
     expect(evaluator.index).toBe(0);
   });
-  it.each([{pitches:[66,70,73],onset:.94, accepted:true},{pitches:[66,70,73],onset:1.12, accepted:false},{pitches:[60,64,67],onset:.84, accepted:true},{pitches:[60,64,67],onset:.94, accepted:false},{pitches:[60,64,67],onset:1.12, accepted:false}])('handles pitches $pitches at $onset seconds around a 1-second deadline', async ({pitches,onset,accepted}) => {
+  it.each([{pitches:[66,70,73],onset:.94, accepted:true},{pitches:[66,70,73],onset:1.12, accepted:false},{pitches:[60,64,67],onset:.84, accepted:true},{pitches:[60,64,67],onset:.94, accepted:true},{pitches:[60,64,67],onset:1.12, accepted:false}])('handles pitches $pitches at $onset seconds around a 1-second deadline', async ({pitches,onset,accepted}) => {
     const input = piano(pitches,false,onset);
     const evaluator = new Evaluator([{label:'G♭',notes:pitches,left:[],right:pitches,requireTogether:true}]);
-    const before = await evaluatePianoWindow(model, preparePianoWindow(input.slice(0,22050)));
+    const before = await recognize(preparePianoWindow(input.slice(0,22050)));
     for (const frame of decodePianoFrames(before.frames,before.onsets,0)) evaluator.push(frame);
     expect(evaluator.index).toBe(0);
     const end=Math.floor(1.5*22050), start=Math.max(0,end-MAX_ANALYSIS_SAMPLES);
-    const final = await evaluatePianoWindow(model, preparePianoWindow(input.slice(start,end)),true);
+    const final = await recognize(preparePianoWindow(input.slice(start,end)),true);
     for (const frame of limitPianoTail(decodePianoFrames(final.frames,final.onsets,start/22050),1,new Set())) evaluator.push(frame);
     expect(evaluator.index===1).toBe(accepted);
     if(!accepted) expect(evaluator.feedback().type).toBe('unconfirmed');
@@ -73,7 +78,7 @@ describe('streaming piano recognition on the real WASM model', () => {
     for(let end=MIN_ANALYSIS_SAMPLES;end<=input.length;end+=ANALYSIS_HOP_SAMPLES){
       const start=Math.max(0,end-MAX_ANALYSIS_SAMPLES);
       const cleaned=suppressPianoNoise(input.slice(start,end),profile);
-      const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+      const prediction=await recognize(preparePianoWindow(cleaned));
       for(const frame of decodePianoFrames(prediction.frames,prediction.onsets,start/22050))evaluator.push(frame);
       if(evaluator.index===1)return true;
     }
@@ -83,7 +88,7 @@ describe('streaming piano recognition on the real WASM model', () => {
     const input=mixPianoNoise(shortPiano(notes,hold),streetNoise(22050));
     expect(await recognizeNoisy(input,notes)).toBe(true);
   });
-  it.each([[60,64,66],[60,64,67,70]])('does not turn a wrong chord %j into the target after filtering',async(...notes)=>{
+  it.each([[60,64,66],[60,64,67,70],[60,64,67,72]])('does not turn a wrong chord %j into the target after filtering',async(...notes)=>{
     const input=mixPianoNoise(shortPiano(notes,.12),streetNoise(22050));
     expect(await recognizeNoisy(input,[60,64,67])).toBe(false);
   });
@@ -93,13 +98,13 @@ describe('streaming piano recognition on the real WASM model', () => {
   });
   it.each([4,25,63])('does not transcribe independently sampled background %i as notes',async seed=>{
     const cleaned=suppressPianoNoise(streetNoise(16000,.003,seed),noiseProfile);
-    const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+    const prediction=await recognize(preparePianoWindow(cleaned));
     expect(decodePianoFrames(prediction.frames,prediction.onsets,0).every(frame=>!frame.notes.length)).toBe(true);
   });
   it('rejects a rising traffic-like noise floor without treating it as music',async()=>{
     const noise=streetNoise(16000,.003,64).map((value,i)=>value*(1+2*i/16000));
     const cleaned=suppressPianoNoise(noise,noiseProfile);
-    const prediction=await evaluatePianoWindow(model,preparePianoWindow(cleaned));
+    const prediction=await recognize(preparePianoWindow(cleaned));
     expect(decodePianoFrames(prediction.frames,prediction.onsets,0).every(frame=>!frame.notes.length)).toBe(true);
   });
   it('flushes the withheld tail on finalization and releases all intermediate tensors', async () => {

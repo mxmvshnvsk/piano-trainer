@@ -1,7 +1,7 @@
 import type { Frame } from './evaluation';
 import { MIN_ANALYSIS_SAMPLES, MAX_ANALYSIS_SAMPLES, ANALYSIS_HOP_SAMPLES, PIANO_SAMPLE_RATE } from './audio-timing';
 import { microphoneAudible, microphoneGain, requestMicrophone, resumeAudio, signalLevel, StreamingResampler } from './audio-signal';
-import { decodePianoFrames, limitPianoTail } from './audio-decoder';
+import { decodePianoFrames, hasRecentPianoEvidence, limitPianoTail } from './audio-decoder';
 import { estimateNoiseProfile, restoreNoiseProfile } from './piano-noise';
 export class MicrophoneError extends Error {
   constructor(readonly reason: 'permission' | 'unavailable' | 'model' | 'device' | 'slow') { super(reason); }
@@ -199,18 +199,7 @@ export class PianoListener {
     const decoded = decodePianoFrames(frames, onsets, start);
     const output = this.endingAt === undefined ? decoded : limitPianoTail(decoded, this.endingAt, this.endingNotes);
     this.onFrames(output);
-    let since: number | undefined;
-    let recognized = false;
-    const newest = output.at(-1)?.at ?? -Infinity;
-    for (const frame of output) {
-      if (frame.notes.length && frame.confidence >= .5) {
-        since ??= frame.at;
-        if (frame.at - since >= .035) {
-          if (newest - frame.at <= .15) recognized = true;
-        }
-      } else since = undefined;
-    }
-    return recognized;
+    return hasRecentPianoEvidence(output);
   }
   async finish() {
     const generation = this.generation;

@@ -1,5 +1,20 @@
 import type { Frame } from './evaluation';
 
+export function hasRecentPianoEvidence(frames: Frame[]): boolean {
+  let since: number | undefined, signature = '';
+  const newest=frames.at(-1)?.at ?? -Infinity;
+  for(const frame of frames) {
+    const current=frame.notes.join(',');
+    if(!frame.notes.length || frame.confidence<(frame.notes.length===1?.65:.5)) {
+      since=undefined;signature='';continue;
+    }
+    if(current!==signature){signature=current;since=frame.at;}
+    since??=frame.at;
+    if(frame.at-since>=.07 && newest-frame.at<=.15)return true;
+  }
+  return false;
+}
+
 export function offsetPianoFrames(frames: Frame[], offset: number): Frame[] {
   return frames.map(frame => ({ ...frame, at: frame.at + offset, onsetTimes: frame.onsetTimes &&
     Object.fromEntries(Object.entries(frame.onsetTimes).map(([note, at]) => [note, at + offset])) }));

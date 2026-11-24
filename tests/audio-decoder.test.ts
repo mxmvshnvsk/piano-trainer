@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePianoFrames, limitPianoTail, offsetPianoFrames } from '../src/audio-decoder';
+import { decodePianoFrames, limitPianoTail, offsetPianoFrames, hasRecentPianoEvidence } from '../src/audio-decoder';
 import { Evaluator } from '../src/evaluation';
 
 function prediction(notes: { midi: number; at: number; until?: number; strength?: number; onset?: number }[], count = 100) {
@@ -101,4 +101,19 @@ describe('deadline evidence',()=>{
     expect(result[1].eligible).toBe(true);
     expect(result[2]).toMatchObject({notes:[64],onsets:[],eligible:false});
   });
+});
+
+ describe('note-only recognition cues',()=>{
+ it('ignores a changing noise pitch and a weak isolated pitch',()=>{
+  const changing=Array.from({length:20},(_,i)=>({at:i*.012,notes:[60+i%2],confidence:.9}));
+  expect(hasRecentPianoEvidence(changing)).toBe(false);
+  expect(hasRecentPianoEvidence(changing.map(f=>({...f,notes:[30],confidence:.6})))).toBe(false);
+ });
+ it('accepts sustained coherent note evidence and short exact chords',()=>{
+  const notes=[65,69,72],frames=Array.from({length:9},(_,i)=>({at:i*.01161,notes,onsets:i===0?notes:[],confidence:.7}));
+  expect(hasRecentPianoEvidence(frames)).toBe(true);
+  const evaluator=new Evaluator([{label:'F',notes,left:[],right:notes,requireTogether:true}]);
+  for(const frame of frames)evaluator.push(frame);
+  expect(evaluator.index).toBe(1);
+ });
 });
